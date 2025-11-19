@@ -1,0 +1,16 @@
+pytorch==2.8.0
+numpy==-2.2.6
+pandas>=2.3.3
+earth-engine-api==1.7.0
+xarray>=2025.11.0
+packaging
+scipy>=1.16.3
+# LAADS (MODIS)
+earthaccess>=0.9
+pyhdf>=0.11.6
+hdf4>4.2.15
+gdal>=3.12.0
+# Climate Data Store
+cdsapi>=0.7.7
+netcdf4>=1.7.3
+h5netcdf>=1.7.3
