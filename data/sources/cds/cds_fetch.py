@@ -51,18 +51,18 @@ class ClimateDataStoreService:
             raise RuntimeError(f"Expected exactly 1 .nc file in {zip_path}, found {len(nc_file)}: {[p.name for p in nc_file]}")
         return nc_file[0]
     
-    def _nc_to_tensor(self, nc_path: Path) -> torch.Tensor:
+    def _nc_to_numpy(self, nc_path: Path) -> torch.Tensor:
         """ Convert .nc file to torch tensor 
         """
         with xarray.open_dataset(nc_path) as ds:
             if self.VARIABLE not in ds:
                 raise KeyError(
-                    f"Variable '{self.variable}' not found in {nc_path}. "
+                    f"Variable '{self.VARIABLE}' not found in {nc_path}. "
                     f"Available: {list(ds.data_vars.keys())}"
                 )
             data_array = ds[self.VARIABLE].load().values  # numpy ndarray
-
-        return torch.from_numpy(data_array)
+        # return torch.from_numpy(data_array)
+        return data_array
     
     def _fetch_year(self, year):
         """ Fetch a single year from CDS
@@ -72,22 +72,20 @@ class ClimateDataStoreService:
         zip_path = self._zip_filename(year)
         zip_dir = zip_path.with_suffix("")
         request_body = self._request_body(year)
-        
 
-        existing_nc_file = zip_dir.glob("*.nc")
-        if existing_nc_file:
+        existing_nc_files = list(zip_dir.glob("*.nc"))
+        if existing_nc_files:
             print(f"[CDS] Year {year}: Found existing .nc")
-            return self._nc_to_tensor(existing_nc_file)
+            return self._nc_to_numpy(existing_nc_files[0])
         
         if not zip_path.exists():
             client = cdsapi.Client()
             client.retrieve(self.DATASET, request_body).download(str(zip_path))
-            nc_file = self._zip_to_nc(zip_path)
             print(f"[CDS] Extracted .nc file for year {year}")
-        else:
-            print(f"[CDS] Year {year}: Found existing .zip")
             
-        tensor = self._nc_to_tensor(nc_file)
+        nc_file = self._zip_to_nc(zip_path)
+
+        tensor = self._nc_to_numpy(nc_file)
         print(f"[CDS] Year {year} tensor shape: {tuple(tensor.shape)}")
 
         return tensor
@@ -129,15 +127,14 @@ class ClimateDataStoreService:
         return merged_tensor, year_order
     
 if __name__ == "__main__":
-    dataset = "satellite-land-cover"
-    years = [
+    years = list([
         "2000", "2001", "2002", "2003", "2004",
         "2005", "2006", "2007", "2008", "2009",
         "2010", "2011", "2012", "2013", "2014",
         "2015", "2016", "2017",
         "2018", "2019", "2020"
-    ]
+    ])
     latlon_bounds = [50, -125, 40, -110]
 
-    cdss = ClimateDataStoreService(dataset, latlon_bounds)
+    cdss = ClimateDataStoreService(latlon_bounds)
     merged_tensor, year_order = cdss.fetch(years)
