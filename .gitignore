@@ -2,10 +2,12 @@
 __pycache__/
 
 # Distribution / packaging
-downloads/
+downloaded/
+fetched/
+ref/
 build/
-lib/
-lib64/
+*.zip
+*.accdb
 
 # Jupyter Notebook
 .ipynb_checkpoints
