@@ -1,0 +1,320 @@
+{
+  "meta": {
+    "concept-type": "granule",
+    "concept-id": "G2185364835-LPCLOUD",
+    "revision-id": 2,
+    "native-id": "MYD11A1.A2002185.h08v04.061.2020128175138",
+    "collection-concept-id": "C1748046084-LPCLOUD",
+    "provider-id": "LPCLOUD",
+    "format": "application/echo10+xml",
+    "revision-date": "2025-08-11T13:41:47.562Z"
+  },
+  "umm": {
+    "TemporalExtent": {
+      "RangeDateTime": {
+        "BeginningDateTime": "2002-07-04T00:00:00.000Z",
+        "EndingDateTime": "2002-07-04T23:59:59.000Z"
+      }
+    },
+    "GranuleUR": "MYD11A1.A2002185.h08v04.061.2020128175138",
+    "AdditionalAttributes": [
+      {
+        "Name": "QAPERCENTGOODQUALITY",
+        "Values": [
+          "8"
+        ]
+      },
+      {
+        "Name": "QAPERCENTOTHERQUALITY",
+        "Values": [
+          "1"
+        ]
+      },
+      {
+        "Name": "QAPERCENTNOTPRODUCEDCLOUD",
+        "Values": [
+          "1"
+        ]
+      },
+      {
+        "Name": "QAPERCENTNOTPRODUCEDOTHER",
+        "Values": [
+          "91"
+        ]
+      },
+      {
+        "Name": "N_GRAN_POINTERS",
+        "Values": [
+          "27"
+        ]
+      },
+      {
+        "Name": "HORIZONTALTILENUMBER",
+        "Values": [
+          "08"
+        ]
+      },
+      {
+        "Name": "VERTICALTILENUMBER",
+        "Values": [
+          "04"
+        ]
+      },
+      {
+        "Name": "TileID",
+        "Values": [
+          "51008004"
+        ]
+      },
+      {
+        "Name": "QAFRACTIONGOODQUALITY",
+        "Values": [
+          "0.0788080"
+        ]
+      },
+      {
+        "Name": "QAFRACTIONOTHERQUALITY",
+        "Values": [
+          "0.0096413"
+        ]
+      },
+      {
+        "Name": "QAFRACTIONNOTPRODUCEDCLOUD",
+        "Values": [
+          "0.0063160"
+        ]
+      },
+      {
+        "Name": "QAFRACTIONNOTPRODUCEDOTHER",
+        "Values": [
+          "0.9052347"
+        ]
+      },
+      {
+        "Name": "CLOUD_CONTAMINATED_LST_SCREENED",
+        "Values": [
+          "YES"
+        ]
+      },
+      {
+        "Name": "identifier_product_doi",
+        "Values": [
+          "10.5067/MODIS/MYD11A1.061"
+        ]
+      },
+      {
+        "Name": "identifier_product_doi_authority",
+        "Values": [
+          "http://dx.doi.org"
+        ]
+      }
+    ],
+    "MeasuredParameters": [
+      {
+        "ParameterName": "MOD 1KM L3 LST",
+        "QAStats": {
+          "QAPercentMissingData": 0.0,
+          "QAPercentOutOfBoundsData": 0.0,
+          "QAPercentInterpolatedData": 0.0,
+          "QAPercentCloudCover": 1.0
+        },
+        "QAFlags": {
+          "AutomaticQualityFlag": "Passed",
+          "AutomaticQualityFlagExplanation": "No automatic quality assessment is performed in the PGE.",
+          "OperationalQualityFlag": "Passed",
+          "OperationalQualityFlagExplanation": "Passed",
+          "ScienceQualityFlag": "Not Investigated",
+          "ScienceQualityFlagExplanation": "See https://landweb.modaps.eosdis.nasa.gov/cgi-bin/QA_WWW/qaFlagPage.cgi?sat=aqua&ver=C6 for the product Science Quality status."
+        }
+      }
+    ],
+    "SpatialExtent": {
+      "HorizontalSpatialDomain": {
+        "Geometry": {
+          "GPolygons": [
+            {
+              "Boundary": {
+                "Points": [
+                  {
+                    "Longitude": -130.562090579434,
+                    "Latitude": 40.0041666666667
+                  },
+                  {
+                    "Longitude": -117.506446197461,
+                    "Latitude": 40.0041666666667
+                  },
+                  {
+                    "Longitude": -140.021638415982,
+                    "Latitude": 49.9958333333333
+                  },
+                  {
+                    "Longitude": -155.578850753484,
+                    "Latitude": 49.9958333333333
+                  },
+                  {
+                    "Longitude": -130.562090579434,
+                    "Latitude": 40.0041666666667
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ProviderDates": [
+      {
+        "Date": "2020-05-25T15:53:16.239Z",
+        "Type": "Insert"
+      },
+      {
+        "Date": "2020-05-25T15:54:03.265Z",
+        "Type": "Update"
+      }
+    ],
+    "CollectionReference": {
+      "ShortName": "MYD11A1",
+      "Version": "061"
+    },
+    "PGEVersionClass": {
+      "PGEVersion": "6.5.17"
+    },
+    "RelatedUrls": [
+      {
+        "URL": "https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.2.jpg",
+        "Type": "GET DATA",
+        "Description": "Download BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.2.jpg"
+      },
+      {
+        "URL": "https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-protected/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/MYD11A1.A2002185.h08v04.061.2020128175138.cmr.xml",
+        "Type": "GET DATA",
+        "Description": "Download MYD11A1.A2002185.h08v04.061.2020128175138.cmr.xml"
+      },
+      {
+        "URL": "https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.1.jpg",
+        "Type": "GET DATA",
+        "Description": "Download BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.1.jpg"
+      },
+      {
+        "URL": "https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-protected/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/MYD11A1.A2002185.h08v04.061.2020128175138.hdf",
+        "Type": "GET DATA",
+        "Description": "Download MYD11A1.A2002185.h08v04.061.2020128175138.hdf"
+      },
+      {
+        "URL": "s3://lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.2.jpg",
+        "Type": "GET DATA VIA DIRECT ACCESS",
+        "Description": "This link provides direct download access via S3 to the granule"
+      },
+      {
+        "URL": "s3://lp-prod-protected/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/MYD11A1.A2002185.h08v04.061.2020128175138.cmr.xml",
+        "Type": "GET DATA VIA DIRECT ACCESS",
+        "Description": "This link provides direct download access via S3 to the granule"
+      },
+      {
+        "URL": "s3://lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.1.jpg",
+        "Type": "GET DATA VIA DIRECT ACCESS",
+        "Description": "This link provides direct download access via S3 to the granule"
+      },
+      {
+        "URL": "s3://lp-prod-protected/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/MYD11A1.A2002185.h08v04.061.2020128175138.hdf",
+        "Type": "GET DATA VIA DIRECT ACCESS",
+        "Description": "This link provides direct download access via S3 to the granule"
+      },
+      {
+        "URL": "https://doi.org/10.5067/MODIS/MYD11A1.061",
+        "Type": "VIEW RELATED INFORMATION",
+        "Description": "The Landing Page for this file may be accessed directly from this link",
+        "MimeType": "text/html"
+      },
+      {
+        "URL": "https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-protected/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/MYD11A1.A2002185.h08v04.061.2020128175138.cmr.xml",
+        "Type": "VIEW RELATED INFORMATION",
+        "Description": "Download MYD11A1.A2002185.h08v04.061.2020128175138.cmr.xml"
+      },
+      {
+        "URL": "s3://lp-prod-protected/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/MYD11A1.A2002185.h08v04.061.2020128175138.cmr.xml",
+        "Type": "VIEW RELATED INFORMATION",
+        "Description": "This link provides direct download access via S3 to the granule"
+      },
+      {
+        "URL": "https://opendap.earthdata.nasa.gov/collections/C1748046084-LPCLOUD/granules/MYD11A1.A2002185.h08v04.061.2020128175138",
+        "Type": "USE SERVICE API",
+        "Subtype": "OPENDAP DATA",
+        "Description": "OPeNDAP request URL"
+      },
+      {
+        "URL": "https://data.lpdaac.earthdatacloud.nasa.gov/s3credentials",
+        "Type": "VIEW RELATED INFORMATION",
+        "Description": "api endpoint to retrieve temporary credentials valid for same-region direct s3 access"
+      },
+      {
+        "URL": "https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.1.jpg",
+        "Type": "GET RELATED VISUALIZATION",
+        "Description": "Download BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.1.jpg"
+      },
+      {
+        "URL": "s3://lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.1.jpg",
+        "Type": "GET RELATED VISUALIZATION",
+        "Description": "This link provides direct download access via S3 to the granule"
+      },
+      {
+        "URL": "https://data.lpdaac.earthdatacloud.nasa.gov/lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.2.jpg",
+        "Type": "GET RELATED VISUALIZATION",
+        "Description": "Download BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.2.jpg"
+      },
+      {
+        "URL": "s3://lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.2.jpg",
+        "Type": "GET RELATED VISUALIZATION",
+        "Description": "This link provides direct download access via S3 to the granule"
+      }
+    ],
+    "CloudCover": 1.0,
+    "Projects": [
+      {
+        "ShortName": "Not provided",
+        "Campaigns": [
+          "Aqua"
+        ]
+      }
+    ],
+    "DataGranule": {
+      "DayNightFlag": "Both",
+      "Identifiers": [
+        {
+          "Identifier": "MYD11A1.A2002185.h08v04.061.2020128175138",
+          "IdentifierType": "ProducerGranuleId"
+        }
+      ],
+      "ProductionDateTime": "2020-05-07T17:51:38.000Z",
+      "ArchiveAndDistributionInformation": [
+        {
+          "Name": "Not provided",
+          "Size": 1.01231,
+          "SizeUnit": "MB"
+        }
+      ]
+    },
+    "Platforms": [
+      {
+        "ShortName": "Aqua",
+        "Instruments": [
+          {
+            "ShortName": "MODIS"
+          }
+        ]
+      }
+    ],
+    "MetadataSpecification": {
+      "URL": "https://cdn.earthdata.nasa.gov/umm/granule/v1.6.6",
+      "Name": "UMM-G",
+      "Version": "1.6.6"
+    }
+  },
+  "size": 1.01231,
+  "data_links": [
+    "s3://lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.2.jpg",
+    "s3://lp-prod-protected/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/MYD11A1.A2002185.h08v04.061.2020128175138.cmr.xml",
+    "s3://lp-prod-public/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/BROWSE.MYD11A1.A2002185.h08v04.061.2020128175143.1.jpg",
+    "s3://lp-prod-protected/MYD11A1.061/MYD11A1.A2002185.h08v04.061.2020128175138/MYD11A1.A2002185.h08v04.061.2020128175138.hdf"
+  ]
+}
