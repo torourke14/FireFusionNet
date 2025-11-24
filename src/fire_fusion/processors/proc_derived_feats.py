@@ -69,16 +69,16 @@ class DerivedProcessor:
                 burn_spatial_rolling = self._compute_fire_spatial_recent(burning_t, sp_burn_kernel, sp_burn_window, name)
                 ds = ds.assign({ name: burn_spatial_rolling })
 
-            elif deriv_feat.key == "precip_5d": 
+            elif deriv_feat.key == "precip_2d": 
                 p5d = (ds['precip']
-                    .rolling(time=5, min_periods=None, center=deriv_feat.agg_center)
+                    .rolling(time=2, min_periods=None, center=deriv_feat.agg_center)
                     .mean().fillna(0)
                 )
                 ds = ds.assign({ name: p5d })
 
-            elif deriv_feat.key == "precip_14d":
+            elif deriv_feat.key == "precip_4d":
                 p14d = (ds['precip']
-                    .rolling(time=14, min_periods=None, center=deriv_feat.agg_center)
+                    .rolling(time=4, min_periods=None, center=deriv_feat.agg_center)
                     .mean().fillna(0)
                 )
                 ds = ds.assign({ name: p14d })

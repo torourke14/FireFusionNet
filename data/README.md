@@ -27,14 +27,6 @@
 - [NASA Data Explorer](https://ladsweb.modaps.eosdis.nasa.gov/search/order/1/MYD11A1--61,MCD15A2H--61)
 - [Gridded Population of the World](https://search.earthdata.nasa.gov/search?fpj=GPW&oe=t&fsm0=Population&fst0=Human+Dimensions&lat=37.29469630844446&long=-72.07369294814293)
 
-###
-- [Data]()
-- [Docs]()
-
-###
-- [Data]()
-- [Docs]()
-
 ### MTBS
 - [Data](https://mtbs.gov/direct-download)
 
