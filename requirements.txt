@@ -4,15 +4,13 @@ pandas>=2.3.3
 # Grid rasterizing
 xarray>=2025.11.0
 rioxarray>=0.19.0
-packaging
-scipy>=1.16.3
 rasterio>=1.4.3
 geopandas>=1.1.1
 shapely>=2.1.2
-# LAADS (MODIS)
+scipy>=1.16.3
+# LAADS API (MODIS)
 earthaccess>=0.9
 # File I/O
 numcodecs>=0.16.1
 pyhdf>=0.11.6
 hdf4>4.2.15
-# gdal>=3.12.0
