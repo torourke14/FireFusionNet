@@ -51,13 +51,15 @@ class UsfsFire(Processor):
             pd.to_datetime(fires_gdf["DISCOVERYDATETIME"], errors="coerce")
             .dt.floor("D")
         )
-
+        
+        # QA col = 1, 2 = bad data
+        qa_mask = xr.apply_ufunc(np.where, (fires_gdf["QA"].astype(int) > 2, np.nan))
+        
+        # --- create new index with discovery dates
         time2index = pd.Series(
             np.arange(len(self.gridref.time_index)), 
             index=self.gridref.time_index
         )
-
-        # --- create new index with discovery dates
         fires_gdf["t_idx"] = time2index.reindex(discovery_dates).values
         fires_gdf["t_idx"] = fires_gdf["t_idx"].dropna().astype("int32")
 
@@ -81,7 +83,7 @@ class UsfsFire(Processor):
             out[int(t_idx)] = mask
 
         occ_txy = xr.DataArray(
-            out,
+            data = out & qa_mask,
             coords={ "time": self.gridref.time_index, "y": self.gridref.y, "x": self.gridref.x },
             dims=("time", "y", "x"),
             name="fire_occurrence_binary"
@@ -105,12 +107,14 @@ class UsfsFire(Processor):
         if "FIRE_YEAR" not in fires_gdf.columns:
             raise KeyError("Expected FIRE_YEAR in perimeters dataset.")
         fires_gdf["_year"] = fires_gdf["FIRE_YEAR"].astype(int)
+        
+        # QA col = 1, 2 = bad data
+        qa_mask = xr.apply_ufunc(np.where, (fires_gdf["QA"].astype(int) > 2, -1))
 
         out_grid = np.zeros(
             (len(self.gridref.time_index), height, width), 
             dtype="uint8"
         )
-        
         for year, subset in fires_gdf.groupby("_year"):
             t_idxs = np.where(self.gridref.time_index.year == year)[0]
             if len(t_idxs) == 0:
@@ -126,7 +130,7 @@ class UsfsFire(Processor):
             out_grid[t_idxs, :, :] = mask[None, :, :]
 
         perim_txy = xr.DataArray(
-            out_grid,
+            data = out_grid & qa_mask,
             coords={ "time": self.gridref.time_index, "y": self.gridref.y, "x": self.gridref.x },
             dims=("time", "y", "x"),
             name="fire_perimeter_binary"
@@ -164,6 +168,9 @@ class UsfsFire(Processor):
         discovery_dates = pd.to_datetime(
             fires_gdf["DISCOVERYDATETIME"], errors="coerce"
         ).dt.floor("D")
+        
+        # QA col = 1, 2 = bad data
+        qa_mask = xr.apply_ufunc(np.where, (fires_gdf["QA"].astype(int) > 2, -1))
 
         time2index = pd.Series(
             np.arange(len(self.gridref.time_index)), 
@@ -199,7 +206,7 @@ class UsfsFire(Processor):
             out_grid[int(t_idx), cause_idx] = mask
 
         cause_txy = xr.DataArray(
-            out_grid,
+            data=out_grid & qa_mask,
             coords={ "time": self.gridref.time_index, "burn_cause": cause_labels, "y": self.gridref.y, "x": self.gridref.x },
             dims=("time", "burn_cause", "y", "x"),
             name=f_config.name,
