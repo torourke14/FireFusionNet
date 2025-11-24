@@ -1,7 +1,7 @@
 # Who wants to deal with tuples in JSON, anyways??
 from dataclasses import dataclass
 from rasterio.enums import Resampling
-from typing import List, Optional, Tuple, Literal
+from typing import Dict, List, Optional, Tuple, Literal
 import numpy as np
 from xarray.core.types import InterpOptions
 from path_config import CROADS_DIR, USFS_DIR, GPW_DIR, GRIDMET_DIR, LANDFIRE_DIR, MODIS_DIR, NLCD_DIR
@@ -21,7 +21,6 @@ CAUSE_MAP = {
         "natural",
         "other natural cause",
     ],
-
     "HUMAN": [
         "3", # smoking
         "4", # campfire
@@ -96,6 +95,7 @@ class Feature:
     ds_norms: Optional[List[str]] = None        # sequence of normalizations done on constructed feature in the CHANNEL
     num_classes: Optional[int] = 0
     one_hot_encode: Optional[bool] = False
+    class_map: Optional[Dict] = {}
 
 def get_f_config():
     return {
@@ -157,7 +157,6 @@ def get_f_config():
         "GPW": [
             Feature(
                 name = "pop_density",
-                drop = True,
                 resampling = Resampling.bilinear,
                 time_interp = ("time", "linear")
             )
@@ -201,7 +200,7 @@ def get_f_config():
                 ds_norms = ["z_score"],
             ),
             Feature(
-                name = "rh_pct",
+                name = "rhumidity_pct",
                 key = "rm",
                 resampling = Resampling.bilinear,
                 time_interp = ("time", "linear"),

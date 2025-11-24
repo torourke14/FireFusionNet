@@ -26,14 +26,14 @@ class DerivedProcessor:
         usfs_o = (ds["usfs_burn"].fillna(0) > 0)
         usfs_p = (ds["usfs_perimeter"].fillna(0) >= fire_perim_threshold)
         # INTERMEDIATE VARIABLES ONLY
-        burning = (modis | usfs_o | usfs_p)
-        burning_tp1 = burning.shift(time=-1, fill_value=0)
+        burning_t = (modis | usfs_o | usfs_p)
+        burning_next = burning_t.shift(time=-1, fill_value=0)
         
         # --- labels --------------------------------------------------
         ignition_next = xr.DataArray(
-            ((burning == 0) & (burning_tp1 == 1)).astype("uint8"),
-            dims=burning.dims,
-            coords=burning.coords,
+            ((burning_t == 0) & (burning_next == 1)).astype("uint8"),
+            dims=burning_t.dims,
+            coords=burning_t.coords,
             name=self.deriv_config[0].name
         )
         ignition_label_name = self.deriv_config[0].name
@@ -50,7 +50,7 @@ class DerivedProcessor:
 
         # --- Masks ---------------------------------------------------
         # only compute loss on cells not burning at t+1
-        burn_loss_mask = (burning_tp1 == 0) | (ignition_next == 1)
+        burn_loss_mask = (burning_next == 0) | (ignition_next == 1)
 
         ds = ds.assign(**{
             ignition_label_name: ignition_next,
@@ -66,7 +66,7 @@ class DerivedProcessor:
             name = deriv_feat.name
 
             if deriv_feat.key == "fire_spatial_roll":
-                burn_spatial_rolling = self._compute_fire_spatial_recent(burning_tp1, sp_burn_kernel, sp_burn_window, name)
+                burn_spatial_rolling = self._compute_fire_spatial_recent(burning_t, sp_burn_kernel, sp_burn_window, name)
                 ds = ds.assign({ name: burn_spatial_rolling })
 
             elif deriv_feat.key == "precip_5d": 
@@ -107,19 +107,25 @@ class DerivedProcessor:
 
 
     def _compute_fire_spatial_recent(self,
-        burning_tp1: xr.DataArray,
+        burning_t: xr.DataArray,
         spatial_kernel_size, 
         spatial_window_size,
         name
     ) -> xr.DataArray:
-        burn_rolling = burning_tp1.rolling(
+        """ 3x3 kernel max of active fires at time = T
+            (ie, is there an active fire next to me?)
+        
+        """
+        burn_rolling = burning_t.rolling(
             time=spatial_window_size, 
             min_periods=1
         ).max().fillna(0)
+        
         burn_filter = maximum_filter(
             input=burn_rolling.values.astype(np.uint8),
             size=(1, spatial_kernel_size, spatial_kernel_size)
         )
+        
         return xr.DataArray(
             data=burn_filter,
             dims=burn_rolling.dims,

@@ -9,10 +9,12 @@ TRAIN_DATA_DIR = DATA_ROOT / "train"
 EVAL_DATA_DIR = DATA_ROOT / "eval"
 TEST_DATA_DIR = DATA_ROOT / "test"
 
+LANDFIRE_DIR   = RAW_DATA_DIR / "landfire/downloaded"
+NLCD_DIR      = RAW_DATA_DIR / "nlcd/downloaded"
+GPW_DIR  = RAW_DATA_DIR / "gpw-v4/downloaded"
 CROADS_DIR  = RAW_DATA_DIR / "census_roads/downloaded"
 USFS_DIR  = RAW_DATA_DIR / "fire_usfs/downloaded"
-GPW_DIR  = RAW_DATA_DIR / "gpw-v4/downloaded"
 GRIDMET_DIR   = RAW_DATA_DIR / "gridmet/downloaded"
-LANDFIRE_DIR   = RAW_DATA_DIR / "landfire/downloaded"
 MODIS_DIR   = RAW_DATA_DIR / "modis/fetched"
-NLCD_DIR      = RAW_DATA_DIR / "nlcd/downloaded"
+
+
