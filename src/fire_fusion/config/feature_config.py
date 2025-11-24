@@ -233,7 +233,7 @@ def get_f_config():
         "CENSUSROADS": [
             Feature(
                 name = "dist_to_road",
-                resampling = None,
+                resampling = Resampling.nearest,
                 time_interp = ("time", "linear"),
                 ds_norms = ["log1p", "z_score"]
             )
@@ -296,10 +296,6 @@ def get_derived_f_config():
             name = "ndvi_anomaly",
             key = "ndvi_anomaly",
             ds_norms = ["z_score"]
-        ),
-        Feature(
-            name = "wildurban_interface",
-            key = "wui"
         ),
         Feature(
             name = "fosberg_fwi",
