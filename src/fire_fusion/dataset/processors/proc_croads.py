@@ -5,7 +5,7 @@ from rasterio import features
 from shapely.geometry import box
 from scipy.ndimage import distance_transform_edt
 
-from ..config.feature_config import Feature
+from fire_fusion.config.feature_config import Feature
 from processor import Processor
 
 

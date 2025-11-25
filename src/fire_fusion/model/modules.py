@@ -43,7 +43,7 @@ class SpatialEncoder(nn.Module):
     CNN with Residual Blocks over (H x W), extracting spatial features 
     per time step T (we call H' and W')
 
-    Shape: (B, T, C, H, W) --> (B, T, E, H', W')
+    Shape: (B, T, C, H, W) --> (B, T, embed_dim, H', W')
     """
     def __init__(self, in_channels, embed_dim):
         super().__init__()
@@ -85,8 +85,8 @@ class SpatialEncoder(nn.Module):
         # out = self.stem(out)
         out = self.down2(out)
         
-        E, Hp, Wp = out.shape[1], out.shape[2], out.shape[3]
-        out = out.reshape(B, T, E, Hp, Wp)
+        e_dim, Hp, Wp = out.shape[1], out.shape[2], out.shape[3]
+        out = out.reshape(B, T, e_dim, Hp, Wp)
         return out
 
 # -------------------------------------------------------------------------------------------
@@ -136,11 +136,12 @@ class WindowedSpatialAttention(nn.Module):
         x_windows = x_windows.permute(0, 1, 3, 2, 4, 5)     # (B*T, nH, nW, ws, ws, C)
         x_windows = x_windows.reshape(B*T*nH*nW, ws*ws, C)  # (num_windows, tokens, C)
 
+        # residual connection for better grad flow
+        x_w = x_windows
         x_norm = self.norm(x_windows)
-
-        # Self-attention within each window
-        out, _ = self.window_attn(x_norm, x_norm, x_norm)         # (num_windows, tokens, C)
-        out = self.proj(out)                               # optional projection
+        out, _ = self.window_attn(x_norm, x_norm, x_norm)  # (num_windows, tokens, C) -- Self-attention within each window
+        out = self.proj(out)
+        out = out + x_w
 
         # Reshape back to (B, T, C, H', W')
         out = out.view(B*T, nH, nW, ws, ws, C)             # (B*T, nH, nW, ws, ws, C)
@@ -156,20 +157,20 @@ class ChannelMixingAttention(nn.Module):
     """
     Multi-Head Attention over CHANNELS, for fixed (B, T, H', W')
     
-    Shape: (B, T, E, H', W') --> (B, T, E, H', W') (no change)
+    Shape: (B, T, embed_dim, H', W') --> (B, T, embed_dim, H', W') (no change)
     Steps:
-        - Projects channel dimension E into d_model
-        - Applies MHSA over channels
+        - Projects channel dimes (embed_dim) -> d_model
+        - Applies MH self-attention over channels
         - Applies MLP
-        - Projects back to E
+        - Projects back to embed_dim
     """
     def __init__(self, num_channels, d_model, num_heads, mlp_ratio, dropout):
         super().__init__()
         self.num_channels = num_channels
         self.d_model = d_model
 
-        # Per-channel embedding: E -> d_model
-        self.in_proj = nn.Linear(1, d_model)   # we will reshape to (E, 1) per spatial location
+        
+        self.in_proj = nn.Linear(1, d_model) # embed_dim -> d_model
         self.out_proj = nn.Linear(d_model, 1)
 
         self.norm1 = nn.LayerNorm(d_model)
@@ -191,36 +192,37 @@ class ChannelMixingAttention(nn.Module):
         )
 
     def forward(self, x: torch.Tensor):
-        # x: (B, T, E, H', W')
-        B, T, E, Hp, Wp = x.shape
-        assert E == self.num_channels, "ChannelMixBlock: num_channels mismatch"
+        # x: (B, T, embed_dim, H', W')
+        B, T, embed_dim, Hp, Wp = x.shape
+        assert embed_dim == self.num_channels, "ChannelMixBlock: num_channels doesn't match incoming embed_dim"
 
-        # Move to (B*T*H'*W', E) to operate per spatial-temporal location
-        x_perm = x.permute(0, 1, 3, 4, 2).contiguous()      # (B, T, H', W', E)
-        x_flat = x_perm.view(B*T*Hp*Wp, E)                  # (N, E)
+        # Move to (B*T*H'*W', embed_dim) to operate per spatial-temporal location
+        x_perm = x.permute(0, 1, 3, 4, 2).contiguous()      # (B, T, H', W', embed_dim)
+        x_flat = x_perm.view(B*T*Hp*Wp, embed_dim)          # (N, embed_dim)
 
-        # Add a dummy feature dim for per-channel projection: (N, E, 1)
-        x_feat = x_flat.unsqueeze(-1)                       # (N, E, 1)
+        # Add a dummy feature dim for per-channel projection: (N, embed_dim, 1)
+        x_feat = x_flat.unsqueeze(-1)                       # (N, embed_dim, 1)
 
         # Project to d_model
-        h = self.in_proj(x_feat)                            # (N, E, d_model)
+        h = self.in_proj(x_feat)                            # (N, embed_dim, d_model)
 
-        # Attention over channels: sequence len = E, embed_dim = d_model
+        # Attention over channels
+        # # sequence len = embed_dim, embed_dim = d_model
         h_norm = self.norm1(h)
-        attn_out, _ = self.attn(h_norm, h_norm, h_norm)     # (N, E, d_model)
+        attn_out, _ = self.attn(h_norm, h_norm, h_norm)     # (N, embed_dim, d_model)
         h = h + attn_out                                    # residual
 
         # MLP
         h_norm2 = self.norm2(h)
-        h_ffn = self.mlp(h_norm2)                           # (N, E, d_model)
+        h_ffn = self.mlp(h_norm2)                           # (N, embed_dim, d_model)
         h = h + h_ffn                                       # residual
 
         # Project back to scalar per channel
-        out_feat = self.out_proj(h)                         # (N, E, 1)
-        out_flat = out_feat.squeeze(-1)                     # (N, E)
+        out_feat = self.out_proj(h)                         # (N, embed_dim, 1)
+        out_flat = out_feat.squeeze(-1)                     # (N, embed_dim)
 
-        # Reshape back to (B, T, E, H', W')
-        out = out_flat.view(B, T, Hp, Wp, E).permute(0, 1, 4, 2, 3).contiguous()
+        # Reshape back to (B, T, embed_dim, H', W')
+        out = out_flat.view(B, T, Hp, Wp, embed_dim).permute(0, 1, 4, 2, 3).contiguous()
         return out
 
 # -------------------------------------------------------------------------------------------
@@ -228,26 +230,50 @@ class ChannelMixingAttention(nn.Module):
 
 class TemporalMixingAttention(nn.Module):
     """
-    Multi-Head Attention over TIME T, for fixed (B, E, H', W')
+    Multi-Head Attention over TIME T, for fixed dims B, embed_dim, H', and W'
     
-    Shape: (B, T, E, H', W') --> (B, T, E, H', W')
+    Shape: (B, T, embed_dim, H', W') --> (B, T, embed_dim, H', W')
     Steps:
     """
     def __init__(self, embed_dim, num_heads, mlp_ratio, dropout):
         super().__init__()
+        self.norm = nn.LayerNorm(embed_dim)
+
         self.attn = nn.MultiheadAttention(
             embed_dim=embed_dim,
             num_heads=num_heads,
             batch_first=True
         )
 
+        hidden_dim = int(embed_dim * mlp_ratio)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(p=dropout),
+            nn.Linear(hidden_dim, embed_dim),
+            nn.Dropout(p=dropout/2)
+        )
+
     def forward(self, f):
         B, T, C, Hp, Wp = f.shape
-        f = f.permute(0, 3, 4, 1, 2) # ->> (B, Hp, Wp, T, C)
-        f = f.reshape(B*Hp*Wp, T, C) # each pixel across time
 
-        out, _ = self.attn(f, f, f)
-        out = out.reshape(B, Hp, Wp, T, C).permute(0, 3, 4, 1, 2) # --> back to (B, T, C, Hp, Wp)
+        # collapse B/H'/W' -- each pixel for each channel across time
+        f_permute = f.permute(0, 3, 4, 1, 2).contiguous() 
+        x = f_permute.view(B*Hp*Wp, T, C)
+
+        x = self.norm(x)
+        out_attn, _ = self.attn(x, x, x)
+        x = x + out_attn
+
+        x = self.norm(x)
+        out_ffn = self.mlp(x)
+        x = x + out_ffn
+
+        # --> back to (B, T, embed_dim, H', W')
+        out = x.view(B, Hp, Wp, T, C).permute(0, 3, 4, 1, 2).contiguous() 
+        
+        
         return out
     
 # -------------------------------------------------------------------------------------------
@@ -256,8 +282,8 @@ class TemporalMixingAttention(nn.Module):
 class BiHeadDecoder(nn.Module):
     """
     Convert spatiotemporal features into H x W risk map.
-    Input:  (B, E, H', W') -- time dimension collapsed to last day
-    Output: (B, 1, H, W)
+    Input:  (B, embed_dim, H', W') -- time dimension collapsed to last day
+    Output: (B, 1, H, W) and (B, num_classes, H, W) per two heads
     """
     def __init__(self, embed_dim, out_size, n_cause_classes = 3):
         super().__init__()
@@ -275,7 +301,7 @@ class BiHeadDecoder(nn.Module):
         self.cause_head = nn.Conv2d(64, self.n_cause_classes, kernel_size=1)
 
     def forward(self, x: torch.Tensor):
-        # f: (B, E, H’, W’)
+        # f: (B, embed_dim, H’, W’)
         f = self.shared_head(x)
 
         ignition_logits = self.ignition_head(f) # (B, 1, H, W)

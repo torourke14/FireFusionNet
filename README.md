@@ -1,8 +1,8 @@
 # FireFusion
 Novel CNN/Transformer mixture neural model that computes risk of wildfire ignition in WA state. Aggregates data from multiple public datasets/APIs to build and train on a rasterized feature matrix.
 
-- `build.py`: Builds model-ready feature set from downloaded data (Given proper download scheme)
-- `train.py`: Uses built .zarr file tensor to train the model
+- `python -m fire_fusion.dataset.build.py`: Builds model-ready feature set from downloaded data (Given proper download scheme)
+- `python -m fire_fusion.train.py`: Uses built .zarr file tensor to train the model
 
 ### Data Sources
 - **Climatology**: Landfire, National Landcover Database (NLCD), Gridded Population of the World (GPWv4), MCD15A2H, MOD13Q1, gridMET (Climatology Lab)

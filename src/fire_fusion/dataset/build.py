@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os
-from typing import Dict, List, Literal, Tuple
+from typing import Dict, Literal
 
 import numpy as np
 import pandas as pd
@@ -8,10 +8,10 @@ from torch.utils.data import DataLoader
 import xarray as xr
 from numcodecs import Blosc
 
-from .dataset.data_loader import FireDataset
-from .dataset.grid import Grid
-from .config.path_config import TRAIN_DATA_DIR, EVAL_DATA_DIR, TEST_DATA_DIR
-from .config.feature_config import Feature, get_f_config, get_derived_f_config
+from .data_loader import FireDataset
+from .grid import Grid
+from ..config.path_config import TRAIN_DATA_DIR, EVAL_DATA_DIR, TEST_DATA_DIR
+from ..config.feature_config import Feature, base_feat_config
 
 from .processors.processor import Processor
 from .processors.proc_derived_feats import DerivedProcessor
@@ -57,22 +57,27 @@ class FeatureGrid:
         lat_bounds = (45.4, 49.1),
         lon_bounds = (-124.8, -117.0),
     ):
-        self.fconfig = get_f_config()
-        self.deriv_fconfig = get_derived_f_config()
-        self.feature_dict: Dict[str, Feature] = { 
-            f.name: f for _, features in self.fconfig.items() for f in features 
+        self.fconfig = base_feat_config()
+
+        self.base_features_dict = {
+            f.name: f
+            for k, features in self.fconfig.items() for f in features
+            if k not in ["DERIVED", "LABELS", "MASKS"]
+        }
+        self.all_features_dict = {
+            f.name: f
+            for k, features in self.fconfig.items() for f in features
+            if k not in ["LABELS", "MASKS"]
         }
         
-        self.label_names = [ l.name for l in self.deriv_fconfig if l.is_label==True ]
-        self.mask_names = [ l.name for l in self.deriv_fconfig if l.is_mask==True ]
+        self.label_names = [ l.name for l in self.fconfig["LABELS"]]
+        self.mask_names = [ l.name for l in self.fconfig["MASKS"]]
 
         if mode == "load":
             self.train_loader = DataLoader(
                 dataset = FireDataset(
                     data = xr.open_zarr(TRAIN_DATA_DIR / f"train.zarr"),
                     device = device,
-                    label_names = self.label_names,
-                    mask_names = self.mask_names,
                     batch_size = batch_size,
                     shuffle = True
                 ),
@@ -84,8 +89,6 @@ class FeatureGrid:
                 dataset = FireDataset(
                     data = xr.open_zarr(EVAL_DATA_DIR / f"eval.zarr"),
                     device = device,
-                    label_names = self.label_names,
-                    mask_names = self.mask_names,
                     batch_size = batch_size,
                     shuffle = False
                 ),
@@ -97,8 +100,6 @@ class FeatureGrid:
                 dataset = FireDataset(
                     data = xr.open_zarr(TEST_DATA_DIR / f"test.zarr"),
                     device = device,
-                    label_names = self.label_names,
-                    mask_names = self.mask_names,
                     batch_size = batch_size,
                     shuffle = False
                 ),
@@ -124,53 +125,19 @@ class FeatureGrid:
         )
         self.processors: Dict[str, Processor] = {
             name: PROCESSORS[name](features, self.grid, self.grid.crs)
-            for name, features in self.fconfig.items()
+            for name, features in self.base_features_dict.items()
         }
         
         self.build_features()
 
     # ------------------------------------------------------------------------------------
-
-    def _mask_water(self, water_mask: xr.DataArray,):
-        """ Zero out all probabilities for non mask/labels variables for x, y over water cells
-            - water_mask == 0 INDICATES WATER.
-        """
-        print("Consolidating water masks with freshly squeezed hydrological juice...")
-
-        for var in self.master_ds.data_vars:
-            if var in self.mask_names or var in self.label_names:
-                continue
-            da = self.master_ds[var]
-            if {"time", "y", "x"}.issubset(da.dims):
-                self.master_ds[var] = da.where(water_mask == 1)
-        return self.master_ds
-
     
-    def _mask_active_burns(self, burn_loss_mask: xr.DataArray):
-        print("Infusing active ignition labels with ethically sourced california reapers...")
-
-        """ Fire ignition is defined:
-            - NOT BURNING @ t = K
-            - BURNING     @ t = K + 1
-
-            To get stable predictors we must enforce the model doesn't predict on 
-            cells that are ACTIVELY burning at t = K. Therefore we will mask any 
-            actively burning cells from data (to not predict) and labels (to not
-            inflate loss).
-        """
-        if {"y", "x"} == set(burn_loss_mask.dims):
-            burn_loss_mask = burn_loss_mask.expand_dims(time=self.master_ds.time)
-
-        self.master_ds["active_burn_mask"] = burn_loss_mask
-        return self.master_ds
-    
-
     def _mask_nan(self):
         data = self.master_ds.to_array("channel")
         
-        valid_cells = xr.apply_ufunc(np.isfinite, data)
+        is_finite_1 = xr.apply_ufunc(np.isfinite, data)
         
-        self.master_ds["nan_mask"] = valid_cells.all(dim="channel")
+        self.master_ds["nan_mask"] = is_finite_1.all(dim="channel")
 
         for var in self.master_ds.data_vars:
             da = self.master_ds[var]
@@ -180,7 +147,7 @@ class FeatureGrid:
         return self.master_ds
     
     def _normalize(self, feature: xr.DataArray, name: str) -> xr.DataArray:
-        f_config = self.feature_dict.get(name)
+        f_config = self.all_features_dict.get(name)
         clip = getattr(f_config, "ds_clip", None)
         norms = getattr(f_config, "ds_norms", None)
 
@@ -188,7 +155,7 @@ class FeatureGrid:
         f_mean = float(ff.mean(dim=ff.dims, skipna=True))
         f_std = float(ff.std(dim=ff.dims, skipna=True))
         f_min = float(ff.min(dim=ff.dims, skipna=True))
-        f_max = float(ff.max(ddim=ff.dims, skipna=True))
+        f_max = float(ff.max(dim=ff.dims, skipna=True))
 
         if not norms:
             return feature
@@ -217,17 +184,23 @@ class FeatureGrid:
 
             print(f"=== {src} =====================================================\n")
             for config in features:
-                layer = processor.build_feature(config)
-                self.master_ds = self.master_ds.assign({ f"{config.name}": layer })
+                try:
+                    layer = processor.build_feature(config)
+                    self.master_ds = self.master_ds.assign({ f"{config.name}": layer })
+                except Exception as e:
+                    print(f"Oh no! {src} processor failed with: {e}")
 
         
-        # compute derived features
-        print(f"Deriving anti-arson techniques through trial and error")
-        drv_processor = DerivedProcessor(self.deriv_fconfig, self.grid)
-        self.master_ds, burn_loss_mask, water_mask = drv_processor.derive_features(self.master_ds)
+        # --- ADD DERIVED FEATURES AND LABELS
+        print(f"Deriving anti-arson techniques through feature derivation..")
+        drv_processor = DerivedProcessor(
+            self.fconfig["DERIVED"], self.fconfig["LABELS"], self.fconfig["MASKS"],
+            self.grid
+        )
+        self.master_ds, _, _ = drv_processor.derive_features(self.master_ds)
 
         # # drop derivative features (not needed anymore)
-        drop_names = [cfg.name for cfg in self.feature_dict.values() if cfg.drop == True]
+        drop_names = [cfg.name for cfg in self.base_features_dict.values() if cfg.drop == True]
         self.master_ds = self.master_ds.drop_vars(drop_names)
 
         # sanity crop
@@ -241,9 +214,7 @@ class FeatureGrid:
         print(f"Baking some cookies...")
         print(f"Baking some muffins...")
 
-        # add masks, fill nans
-        self.master_ds = self._mask_water(water_mask)
-        self.master_ds = self._mask_active_burns(burn_loss_mask)
+        # fill nans
         self.master_ds = self._mask_nan()
 
         # normalize features
@@ -252,11 +223,13 @@ class FeatureGrid:
                 continue
             self.master_ds[f] = self._normalize(self.master_ds[f], name=str(f))
 
+        # self.save_splits_zarr(self.master_ds)
 
-    def _create_splits(self, features, labels, masks, tr_yrs, val_yrs, tst_yrs):
-        (train_start, train_end) = tr_yrs
-        (val_start,  val_end)  = val_yrs
-        (test_start,  test_end)  = tst_yrs
+
+    def _create_splits(self, ds, train_yrs, eval_yrs, test_yrs):
+        (train_start, train_end) = train_yrs
+        (val_start,  val_end)  = eval_yrs
+        (test_start,  test_end)  = test_yrs
 
         def slice_years(ds: xr.Dataset, start_yr, end_yr: int) -> xr.Dataset:
             start_str = f"{start_yr}-01-01"
@@ -264,24 +237,14 @@ class FeatureGrid:
             return ds.sel(time=slice(start_str, end_str))
 
         splits = {}
-        splits["train"] = {
-            "features": slice_years(features, train_start, train_end),
-            "golds":    slice_years(labels,   train_start, train_end),
-            "masks":    slice_years(masks,    train_start, train_end),
-        }
-        splits["eval"] = {
-            "features": slice_years(features, val_start, val_end),
-            "golds":    slice_years(labels,   val_start, val_end),
-            "masks":    slice_years(masks,    val_start, val_end),
-        }
-        splits["test"] = {
-            "features": slice_years(features, test_start, test_end),
-            "golds":    slice_years(labels,   test_start, test_end),
-            "masks":    slice_years(masks,    test_start, test_end),
-        }
+        splits["train"] = slice_years(ds, train_start, train_end)
+        splits["eval"] = slice_years(ds, val_start, val_end)
+        splits["test"] = slice_years(ds, test_start, test_end)
         return splits
     
-    def save_splits_zarr(self, train_yrs: Tuple[int, int], eval_yrs: Tuple[int, int], test_yrs: Tuple[int, int]):
+    def save_splits_zarr(self, dataset: xr.Dataset):
+        splits = self._create_splits(dataset, (2000, 2014), (2015, 2017), (2018, 2020))
+        
         compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
         encoding = { var: { "compressor": compressor } for var in self.master_ds.data_vars }
 
@@ -291,17 +254,17 @@ class FeatureGrid:
         excluded = set(self.label_names) | set(self.mask_names)
         self.feature_vars = [v for v in self.master_ds.data_vars if v not in excluded]
 
-        self.master_ds.sel(time=slice(f"{train_yrs[0]}-01-01", f"{train_yrs[1]}-12-31")).to_zarr(
+        splits["train"].to_zarr(
             os.path.join(TRAIN_DATA_DIR, f"train.zarr"),
             mode="w",
             encoding=encoding
         )
-        self.master_ds.sel(time=slice(f"{eval_yrs[0]}-01-01", f"{eval_yrs[1]}-12-31")).to_zarr(
+        splits["eval"].to_zarr(
             os.path.join(EVAL_DATA_DIR, f"eval.zarr"),
             mode="w",
             encoding=encoding
         )
-        self.master_ds.sel(time=slice(f"{test_yrs[0]}-01-01", f"{test_yrs[1]}-12-31")).to_zarr(
+        splits["test"].to_zarr(
             os.path.join(TEST_DATA_DIR, f"test.zarr"),
             mode="w",
             encoding=encoding

@@ -4,16 +4,19 @@
 
 import xarray as xr
 import numpy as np
-from typing import List, Tuple
+from typing import Tuple
 from scipy.ndimage import maximum_filter
 
-from ..config.feature_config import CAUSAL_CLASSES, CAUSE_MAP
+from fire_fusion.config.feature_config import CAUSAL_CLASSES, CAUSE_RAW_MAP
 
 class DerivedProcessor:
-    def __init__(self, cfg, mgrid):
-        self.deriv_config = cfg
+    def __init__(self, drv_features, labels, masks, mgrid):
+        self.drv_features = drv_features
+        self.labels = labels
+        self.masks = masks
         self.gridref = mgrid
 
+        
     def derive_features(self, ds: xr.Dataset, 
         fire_perim_threshold = 0.2, sp_burn_kernel = 3, sp_burn_window = 3
     ) -> Tuple[xr.Dataset, xr.DataArray, xr.DataArray]:
@@ -27,42 +30,41 @@ class DerivedProcessor:
         usfs_p = (ds["usfs_perimeter"].fillna(0) >= fire_perim_threshold)
         # INTERMEDIATE VARIABLES ONLY
         burning_t = (modis | usfs_o | usfs_p)
-        burning_next = burning_t.shift(time=-1, fill_value=0)
+        burning_tp1 = burning_t.shift(time=-1, fill_value=0)
         
         # --- labels --------------------------------------------------
         ignition_next = xr.DataArray(
-            ((burning_t == 0) & (burning_next == 1)).astype("uint8"),
+            ((burning_t == 0) & (burning_tp1 == 1)).astype("uint8"),
             dims=burning_t.dims,
             coords=burning_t.coords,
-            name=self.deriv_config[0].name
+            name=self.drv_features[0].name
         )
-        ignition_label_name = self.deriv_config[0].name
 
         # cause tied to next ignition
         cause_id = xr.full_like(ds['usfs_burn_cause'], fill_value=-1, dtype="int16")
         for idx, klass in enumerate(CAUSAL_CLASSES):
-            for token in CAUSE_MAP[klass]:
-                # This assumes raw_cause is string-like; adjust for ints
+            for token in CAUSE_RAW_MAP[klass]:
                 cause_id = xr.where(ds['usfs_burn_cause'] == token, idx, cause_id)
-        cause_tp1 = cause_id.shift(time=-1, fill_value=-1)
-        ignition_next_cause = xr.where(ignition_next == 1, cause_tp1, -1)
-        cause_label_name    = self.deriv_config[1].name
+        # saimilarly shift forward one time step
+        # trainer must ignore -1, never feed it to cross_entropy w/o masking
+        cause_id_tp1 = cause_id.shift(time=-1, fill_value=-1)
+        ignition_next_cause = xr.where(ignition_next == 1, cause_id_tp1, -1)
 
         # --- Masks ---------------------------------------------------
-        # only compute loss on cells not burning at t+1
-        burn_loss_mask = (burning_next == 0) | (ignition_next == 1)
+        # only compute loss (1) if not burning at next timestep on cells not burning at t+1
+        burn_loss_mask = (burning_t == 0).astype("uint8")
 
         ds = ds.assign(**{
-            ignition_label_name: ignition_next,
-            cause_label_name: ignition_next_cause,
-            burn_loss_mask: burn_loss_mask
+            self.labels[0].name: ignition_next,         # ign_next
+            self.labels[1].name: ignition_next_cause,   # ign_next_cause
+            self.masks[0].name: burn_loss_mask          # act_fire_mask
             # water mask already added in feature extraction
         })
         
 
         print(f"Reversing polarity of the of the anti-polarity reverser...")
 
-        for deriv_feat in self.deriv_config:
+        for deriv_feat in self.drv_features:
             name = deriv_feat.name
 
             if deriv_feat.key == "fire_spatial_roll":
@@ -89,10 +91,6 @@ class DerivedProcessor:
                 ndvi_anom.name = name
                 ds = ds.assign({ name: ndvi_anom })
 
-            elif deriv_feat.key == "wui": 
-                wui_smooth = self._compute_wui(ds['pop_density'], ds['lcov_class'])
-                ds = ds.assign({ name: wui_smooth })
-
             elif deriv_feat.key == "ffwi": 
                 fosberg_fwi = self._compute_fosberg_fwi(Tf=ds['temp_avg'], sH=ds['rh_pct'], Ws=ds['wind_mph'])
                 ds = ds.assign({ name: fosberg_fwi })
@@ -114,7 +112,6 @@ class DerivedProcessor:
     ) -> xr.DataArray:
         """ 3x3 kernel max of active fires at time = T
             (ie, is there an active fire next to me?)
-        
         """
         burn_rolling = burning_t.rolling(
             time=spatial_window_size, 
@@ -132,28 +129,6 @@ class DerivedProcessor:
             coords=burn_rolling.coords,
             name=name,
         )
-    
-
-    def _compute_wui(self,
-        pop_norm: xr.DataArray, 
-        lcov_class: xr.DataArray,
-        wildland_ixs = [4, 5, 7]
-    ) -> xr.DataArray:
-        """
-            WUI = 1 if any wildlife class
-        """
-        wild_ohe = lcov_class[..., list(wildland_ixs)]
-
-        # Reduce over the ohe to get a [0, 1] wildland value on 2d grid
-        wildland_mask = wild_ohe.max(dim="lc_class_index")  
-
-        # population is HEAVILY skewed towards cities
-        # add sigmoid to norm'd population to further smooth out non-linearity
-        # smoothed WUI as sigmopoid of norm'd population * wildland mask
-
-        wui_smooth = wildland_mask * (1.0 / (1.0 + np.exp(-1.0 * pop_norm)))
-        wui_smooth.name = "wui_smooth"
-        return wui_smooth
     
 
     def _compute_fosberg_fwi(self,
@@ -180,6 +155,28 @@ class DerivedProcessor:
         
         ffwi = eta * np.sqrt(1.0 + Ws ** 2) / 0.3002
         return ffwi
+    
+
+    def _compute_wui(self,
+        pop_norm: xr.DataArray, 
+        lcov_class: xr.DataArray,
+        wildland_ixs = [4, 5, 7]
+    ) -> xr.DataArray:
+        """
+            WUI = 1 if any wildlife class
+        """
+        wild_ohe = lcov_class[..., list(wildland_ixs)]
+
+        # Reduce over the ohe to get a [0, 1] wildland value on 2d grid
+        wildland_mask = wild_ohe.max(dim="lc_class_index")  
+
+        # population is HEAVILY skewed towards cities
+        # add sigmoid to norm'd population to further smooth out non-linearity
+        # smoothed WUI as sigmopoid of norm'd population * wildland mask
+
+        wui_smooth = wildland_mask * (1.0 / (1.0 + np.exp(-1.0 * pop_norm)))
+        wui_smooth.name = "wui_smooth"
+        return wui_smooth
         
     
     

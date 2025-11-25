@@ -6,7 +6,7 @@ import xarray as xr
 from pathlib import Path
 from typing import Dict, List, Literal, Sequence, Tuple
 
-from src.fire_fusion.config.path_config import TRAIN_DATA_DIR, EVAL_DATA_DIR, TEST_DATA_DIR
+from src.fire_fusion.config.feature_config import base_feat_config
 
 # elif ntype == "one-hot-encode":
 #     one_hot_year = torch.nn.functional.one_hot(lc, num_classes=num_classes) # (T_year, H, W, C)
@@ -21,20 +21,19 @@ class FireDataset(IterableDataset):
         self,
         data,
         device: torch.device | None,
-        label_names: List[str],
-        mask_names: List[str],
         batch_size: int = 32,
         shuffle: bool = True,
         
     ):
         super().__init__()
-        self.label_names = label_names
-        self.mask_names = mask_names
+        self.ds = data
+        self.device = device
         self.batch_size = batch_size
         self.shuffle = shuffle
-        self.device = device
-
-        self.ds = data
+        
+        feat_config = base_feat_config()
+        self.label_names = [l.name for l in feat_config["LABELS"]]
+        self.mask_names = [m.name for m in feat_config["MASKS"]]
 
         excluded = set(self.label_names) | set(self.mask_names)
         self.feature_vars = [v for v in self.ds.data_vars if v not in excluded]
@@ -50,7 +49,6 @@ class FireDataset(IterableDataset):
         # Still lazy until we call np.array(...)
         ds_slice = self.ds.isel(time=slice(start, end))
 
-        
         feature_arrays = [np.array(ds_slice[v].data) for v in self.feature_vars]
         
         # (slice_len,  ..., num_features)
@@ -87,7 +85,7 @@ class FireDataset(IterableDataset):
 
         for start_idx in range(0, self.n_samples, self.batch_size):
             batch_indices = indices[
-                start_idx:min(start_idx + self.batch_size, self.n_samples)
+                start_idx : min(start_idx + self.batch_size, self.n_samples)
             ]
 
             slice_start = int(batch_indices.min())
@@ -97,12 +95,12 @@ class FireDataset(IterableDataset):
 
             inner_idx = batch_indices - slice_start
 
-            Xb = X_slice[inner_idx]
-            yb_dict = {
+            Xb = (X_slice[inner_idx])
+            y_dict = {
                 name: y_slice[name][inner_idx] for name in self.label_names
             }
-            mb_dict = {
+            m_dict = {
                 name: m_slice[name][inner_idx] for name in self.mask_names
             }
 
-            yield Xb, yb_dict, mb_dict
+            yield Xb, y_dict, m_dict

@@ -1,11 +1,11 @@
 from collections import defaultdict
-from fire_fusion.dataset.feature_utils import K_to_F, load_as_xarr
-from processor import Processor
 import numpy as np
 import xarray as xr
 
-from src.fire_fusion.config.feature_config import Feature
-from src.fire_fusion.config.path_config import GRIDMET_DIR
+from processor import Processor
+from fire_fusion.utils.utils import K_to_F, load_as_xarr
+from fire_fusion.config.feature_config import Feature
+from fire_fusion.config.path_config import GRIDMET_DIR
 
 class GridMet(Processor):
     def __init__(self, cfg, master_grid, mCRS):

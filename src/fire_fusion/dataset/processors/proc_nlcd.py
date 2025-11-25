@@ -4,8 +4,8 @@ import pandas as pd
 
 from fire_fusion.config.feature_config import Feature
 from fire_fusion.config.path_config import NLCD_DIR
-from ..dataset.feature_utils import load_as_xarr
-from ..config.feature_config import land_cover_map
+from fire_fusion.config.feature_config import LAND_COVER_RAW_MAP
+from fire_fusion.utils.utils import load_as_xarr
 from processor import Processor
 
 class NLCD(Processor):
@@ -58,11 +58,11 @@ class NLCD(Processor):
         data = feature.where(~(feature > 100))
         data = data.fillna(-1).astype("int16")
         data_arr = data.values
-        classes = list(land_cover_map.keys())
+        classes = list(LAND_COVER_RAW_MAP.keys())
 
         hot_encode = np.zeros((len(classes), H, W), dtype=np.float32)
 
-        for idx, (_, raw_codes) in enumerate(land_cover_map.items()):
+        for idx, (_, raw_codes) in enumerate(LAND_COVER_RAW_MAP.items()):
             mask = np.isin(data_arr, raw_codes)
             hot_encode[idx][mask] = 1.0
 

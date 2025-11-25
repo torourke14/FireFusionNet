@@ -7,7 +7,10 @@ from xarray.core.types import InterpOptions
 from src.fire_fusion.config.feature_config import Feature
 
 class Processor:
-    """ Subclass that generalizes functions for extracting of features from a source """
+    """
+    Subclass that generalizes functions for extracting of features from a source
+    """
+    
     def __init__(self, cfg: List[Feature], master_grid, mCRS):
         self.cfg = cfg
         self.gridref = master_grid

@@ -3,8 +3,6 @@ import torch.nn as nn
 from .modules import SpatialEncoder, WindowedSpatialAttention, ChannelMixingAttention, TemporalMixingAttention, BiHeadDecoder
 
 
-
-
 class FireFusionModel(nn.Module):
     """
     Given feature channels (C) and timesteps (T), compute the risk of wildfire ignition across a H x W grid.
@@ -25,22 +23,15 @@ class FireFusionModel(nn.Module):
         super().__init__()
         self.encoder = SpatialEncoder(in_channels, embed_dim)
         self.ws_attn = WindowedSpatialAttention(embed_dim, num_heads=ws_nheads, window_size=ws_win_size, dropout=ws_dropout)
-        self.cm_attn = ChannelMixingAttention(num_heads=cm_nheads, num_channels=E, d_model=cm_d_model, mlp_ratio=cm_mlp_ratio, dropout=cm_dropout)
+        self.cm_attn = ChannelMixingAttention(num_heads=cm_nheads, num_channels=embed_dim, d_model=cm_d_model, mlp_ratio=cm_mlp_ratio, dropout=cm_dropout)
         self.tm_attn = TemporalMixingAttention(embed_dim, num_heads=tm_nheads, mlp_ratio=tm_mlp_ratio, dropout=tm_dropout)
         self.decoder = BiHeadDecoder(embed_dim, out_size, n_cause_classes=3)
 
     def forward(self, x: torch.Tensor):
-        y = self.encoder(x)
-        print(f"[WFM] Encoding complete...")
-
-        y = self.ws_attn(y)
-        print(f"[WFM] Windowed Spatial Attention complete...")
-
-        y = self.cm_attn(y)
-        print(f"[WFM] Channel Mixing Attention complete...")
-
-        y = self.tm_attn(y)
-        print(f"[WFM] Temporal Mixing Attention complete...")
+        y = self.encoder(x);        print(f"[WFM] Encoding complete...")
+        y = self.ws_attn(y);        print(f"[WFM] Windowed Spatial Attention complete...")
+        y = self.cm_attn(y);        print(f"[WFM] Channel Mixing Attention complete...")
+        y = self.tm_attn(y);        print(f"[WFM] Temporal Mixing Attention complete...")
 
         # Only decode the prediction from the last day
         y = y[:, -1]

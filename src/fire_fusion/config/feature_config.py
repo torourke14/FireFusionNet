@@ -14,7 +14,7 @@ CAUSAL_CLASSES = [
     "UNKNOWN"
 ]
 
-CAUSE_MAP = {
+CAUSE_RAW_MAP = {
     "NATURAL_LIGHTNING": [
         "1", # 1, 1 - lightning
         "lightning",
@@ -27,46 +27,34 @@ CAUSE_MAP = {
         "7", # arson
         "8", # children
         # text
-        "campfire",
-        "camping",
-        "arson",
-        "incendiary",
+        "campfire", "camping",
+        "arson", "incendiary", "firearms/weapons",
         "children",
-        "firearms/weapons",
         "human",
         "miscellaneous",
         "other causes",
         "other human cause",
     ],
-
     "INDUSTRIAL": [
         "2", # equip/vehicle use
         "5", # debris burning
         "6", # railroad
         "9", # misc
-        "debris burning",
-        "debris/open burning",
-        "debris",
-        "equip/vehicle use",
-        "equipment",
-        "equipment use",
+        "debris burning", "debris/open burning", "debris",
+        "equip/vehicle use", "equipment", "equipment use",
         "powgen/trans/distrib",
-        "railroad",
-        "utilities",
-        "vehicle",
+        "railroad", "utilities", "vehicle",
     ],
-
     "UNKNOWN": [
         "0",
         "cause not identified",
         "investigated but und",
-        "undetermined",
-        "undertermined",
+        "undetermined", "undertermined",
         "",
     ],
 }
 
-land_cover_map = {
+LAND_COVER_RAW_MAP = {
     0: [11], # water
     1: [12], # snow
     2: [21, 22], # developed, < 49%
@@ -97,7 +85,7 @@ class Feature:
     one_hot_encode: Optional[bool] = False
     class_map: Optional[Dict] = {}
 
-def get_f_config():
+def base_feat_config():
     return {
         "LANDFIRE": [
             Feature(
@@ -124,7 +112,6 @@ def get_f_config():
             Feature(
                 name = "water_mask",
                 key = "_EVC",
-                drop = True,
                 resampling = Resampling.nearest,
                 time_interp = ("time", "linear")
             )
@@ -257,53 +244,54 @@ def get_f_config():
                 key = "Fire_Cause",
                 time_interp = ("existing", "zero")
             ),
+        ],
+
+        
+        "DERIVED": [
+            Feature(
+                name = "fire_spatial_roll",
+                key = "fire_spatial_roll",
+                time_interp = ("existing", "nearest"),
+                ds_norms = ["log1p", "z_score"],
+            ),
+            Feature(
+                name = "precip_2d",
+                key = "precip_2d",
+                resampling = Resampling.bilinear,
+                time_interp = ("existing", "linear"),
+                agg_center = True,
+                ds_norms = ["log1p", "z_score"],
+            ),
+            Feature(
+                name = "precip_4d",
+                key = "precip_4d",
+                resampling = Resampling.bilinear,
+                time_interp = ("existing", "linear"),
+                agg_center = True,
+                ds_norms = ["log1p", "z_score"]
+            ),
+            Feature(
+                name = "ndvi_anomaly",
+                key = "ndvi_anomaly",
+                ds_norms = ["z_score"]
+            ),
+            Feature(
+                name = "fosberg_fwi",
+                key = 'ffwi',
+                ds_norms = ["z_score"],
+            ),
+            Feature(
+                name = "doy_sin",
+                ds_norms = ["to_sin"]
+            ),
+        ],
+        "LABELS": [
+            Feature(name="ign_next", is_label=True),
+            Feature(name="ign_next_cause", is_label=True),
+        ],
+        "MASKS": [
+            Feature(name="act_fire_mask", is_mask=True),
+            Feature(name="water_mask", is_mask=True)
         ]
     }
 
-def get_derived_f_config():
-    return [
-        # labels
-        Feature(name = "ignition_tp1", is_label=True),
-        Feature(name = "cause_tp1", is_label=True),
-        # masks
-        Feature(name = "water_mask", is_mask=True),
-        Feature(name = "active_burn_mask", is_mask=True),
-        Feature(name = "burn_loss_mask", is_mask=True),
-        # features
-        Feature(
-            name = "fire_spatial_roll",
-            key = "fire_spatial_roll",
-            time_interp = ("existing", "nearest"),
-            ds_norms = ["log1p", "z_score"],
-        ),
-        Feature(
-            name = "precip_2d",
-            key = "precip_2d",
-            resampling = Resampling.bilinear,
-            time_interp = ("existing", "linear"),
-            agg_center = True,
-            ds_norms = ["log1p", "z_score"],
-        ),
-        Feature(
-            name = "precip_4d",
-            key = "precip_4d",
-            resampling = Resampling.bilinear,
-            time_interp = ("existing", "linear"),
-            agg_center = True,
-            ds_norms = ["log1p", "z_score"]
-        ),
-        Feature(
-            name = "ndvi_anomaly",
-            key = "ndvi_anomaly",
-            ds_norms = ["z_score"]
-        ),
-        Feature(
-            name = "fosberg_fwi",
-            key = 'ffwi',
-            ds_norms = ["z_score"],
-        ),
-        Feature(
-            name = "doy_sin",
-            ds_norms = ["to_sin"]
-        ),
-    ]

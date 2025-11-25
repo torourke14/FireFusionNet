@@ -6,14 +6,16 @@ from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
 from torch.amp.autocast_mode import autocast
 
-from typing import Tuple, Dict
+from typing import Literal, Tuple, Dict
 from tqdm import tqdm
 from time import perf_counter
 
-from fire_fusion.model import FireFusionModel
-from .build import FeatureGrid
-from .utils import estimate_model_size_mb, set_global_seed, get_device_config, save_model
-from .utils import WarmupCosineAnnealingLR
+from .utils.metrics import ConfusionMatrix, Accuracy
+
+from .model.model import FireFusionModel
+from .dataset.build import FeatureGrid
+from .utils.utils import estimate_model_size_mb, set_global_seed, get_device_config, save_model
+from .utils.utils import WarmupCosineAnnealingLR
 
 
 class WRMTrainer:
@@ -21,7 +23,7 @@ class WRMTrainer:
         train_loader: DataLoader,
         val_loader: DataLoader,
         device: torch.device,
-        model_params: Dict[str, int | float],
+        model_params: Dict,
         epochs: Tuple[int, int, int], # (warmup, total, early stop patience)
         lrs: Tuple[float, float], # (min, base after warmup)
         weight_decay: float,
@@ -29,82 +31,110 @@ class WRMTrainer:
         debug: bool,
         acc_goal = 0.5
     ):
-        self.device = device;self.use_amp = bool(device.type == "cuda")
+        self.device = device;
+        self.use_amp = bool(device.type == "cuda")
 
         self.train_loader = train_loader;
         self.val_loader = val_loader
 
-        in_ch, emb_dim, out_size, num_heads = (p[k] for p, k in model_params.items())
+        mp = model_params
         self.model = FireFusionModel(
-            in_channels=in_ch, 
-            embed_dim=emb_dim, 
-            out_size=out_size, 
-            num_heads=num_heads
+            in_channels=mp['in_channels'], embed_dim=mp['embed_dim'],
+            ws_nheads=mp['ws_nheads'], ws_win_size=mp['ws_win_size'], ws_dropout=mp['ws_dropout'],  
+            cm_nheads=mp['cm_nheads'], cm_d_model=mp['cm_d_model'], cm_mlp_ratio=mp['cm_mlp_ratio'], cm_dropout=mp['cm_dropout'],
+            tm_nheads=mp['tm_nheads'], tm_mlp_ratio=mp['tm_mlp_ratio'], tm_dropout=mp['tm_dropout'],
+            out_size=mp['out_size'],
         ).to(self.device)
+
+        self.bcewl_loss = nn.BCEWithLogitsLoss(reduction="none")
 
         self.ep_warmup, self.ep_max, self.ep_early_stop = epochs
         self.min_lr, self.base_lr = lrs
         self.weight_decay = weight_decay
         self.grad_clip = grad_clip
         self.debug = debug
-        # self.metrics = PlannerMetric()
+        self.metrics = { 
+            'ign': Accuracy(id='ign'),
+            'ign_cause': Accuracy(id='cause'),
+            'ign_matrix': ConfusionMatrix(num_classes=2)
+        }
 
     def _compute_loss(self,
-        ign_logits: torch.Tensor,
-        cause_logits: torch.Tensor,
-        fire_mask: torch.Tensor,
+        # outputs: Tuple, # multi-class, don't specify # classes
+        ign_logits: torch.Tensor, # (B, 1, H, W)
+        ign_golds: torch.Tensor, # (B, 1, H, W)
+        cause_logits: torch.Tensor, # (B, num_classes, H, W)
+        cause_golds: torch.Tensor, # (B, H, W)
+        # masks
+        act_fire_mask: torch.Tensor,
+        water_mask: torch.Tensor,
         alpha_ign: float = 1.0,
-        alpha_cause: float = 1.0,
-        ign_weight: float = 5.0
+        alpha_cause: float = 1.0
     ):
         """ Compute BCELogitsLoss on ignition at time t + 1,
             as well as cross entropy loss on ignition TYPE given an ignition
         """
-        ignition_loss = nn.BCEWithLogitsLoss(
-            ign_logits.squeeze(1),  # (B, H, W)
-            cause_logits.float(),
+        # equals 1 if (land) and (not burning at time T)
+        ign_mask = (water_mask == 1) & (act_fire_mask == 1)
+
+        # Ignition Loss: on ignition at t = t+1
+        ign_logits_flat = ign_logits.squeeze(1)
+        ign_targets = ign_golds.float()
+        ign_loss = self.bcewl_loss(
+            ign_logits_flat, ign_targets
         )
 
-        K = ign_logits.shape[1]
-        fire_mask = (fire_mask == 1)  # (B, H, W)
+        masked_ign_loss = ign_loss * ign_mask
+        ign_loss = (masked_ign_loss).sum() / (ign_mask.sum() + 1e-6)
 
-        if fire_mask.any():
-            # Select only masked locations
-            ign_loss_masked = ign_logits.permute(0, 2, 3, 1)[fire_mask]   # (N_ign, K)
-            y_cause_masked  = ign_loss_masked[fire_mask]                  # (N_ign,)
+        # Cause loss: Only compute ignition happened at t+1, we have a valid cause label, and passes water mask
+        cause_mask = (ign_golds == 1) & (cause_golds != -1) & ign_mask
+        if cause_mask.any():
+            cause_logits_flat = cause_logits.permute(0, 2, 3, 1)[cause_mask]
+            cause_targets_flat = cause_golds[cause_mask].long()
 
-            cause_loss = CrossEntropyLoss(logits_cause_masked, y_cause_masked, reduction="none")
+            cause_loss = nn.functional.cross_entropy(
+                cause_logits_flat, cause_targets_flat, 
+                reduction="mean"
+            )
         else:
-            ce_loss = torch.tensor(0.0, device=ign_logits.device)
+            cause_loss = torch.Tensor(0.0, device=ign_logits.device)
+
+        total_loss = (ign_loss * alpha_ign) + (cause_loss * alpha_cause)
+        return total_loss, ign_loss, cause_loss
 
 
-        loss = (alpha_ign * ignition_loss) + (alpha_cause * ce_loss)
-
-    def train_epoch(self, epoch: int):
+    def train_epoch(self):
         self.model.train()
-        total_losses = torch.zeros((1, 2), dtype=torch.float, device=self.device)
+        ep_total_loss = 0.0
+        ep_ign_loss = 0.0
+        ep_cause_loss = 0.0
         n_samples = 0
-        # is_first_batch = True
-
-        for batch in tqdm(self.train_loader, desc="Training...", leave=False):
-            features = batch["image"].to(self.device)
+        
+        for features, golds, masks in tqdm(self.train_loader, desc="Training...", leave=False):
+            features = features.to(self.device)
+            golds = { k: v.to(self.device) for k, v in golds.items() }
+            masks = { k: v.to(self.device) for k, v in masks.items() }
             
             self.optimizer.zero_grad(set_to_none=True)
             lr_used = self.optimizer.param_groups[0]["lr"]
 
             # Run model
             with autocast(device_type=self.device.type, enabled=self.use_amp):
-                ignition_logits, cause_logits = self.model(features)
+                ign_logits, cause_logits = self.model(features)         # (B, 1, H, W), (B, num_classes, H, W)
+                ign_golds = golds["ign_next"]
+                cause_golds = golds["ign_next_cause"]
 
-                gold_risks = batch["risk_labels"].to(self.device)
-                fire_mask = batch.get("fire_mask", None).to(self.device).bool() # (B, n_waypoints)
-                loss = self._compute_loss(ignition_logits, cause_logits, gold_ignitions, gold_causes, fire_mask=fire_mask)
-                tot_loss = loss[:, 0]
+                tot_loss, ign_loss, cause_loss = self._compute_loss(
+                    ign_logits, ign_golds, cause_logits, cause_golds,
+                    masks["act_fire_mask"], masks["water_mask"]
+                )
 
-            # Log loss/error metrics
-            total_losses += loss.detach()
-            n_samples += gold_risks.size(0)
-            self.metrics.add(ignition_logits.detach(), gold_risks, fire_mask)
+            # Log total loss
+            ep_total_loss += tot_loss.item()
+            ep_ign_loss += ign_loss.item()
+            ep_cause_loss += cause_loss.item()
+            n_samples += golds["ign_next"].size(0)
 
             # Backpropogate -> clip gradients -> step optimizer -> step optimizer
             tot_loss.backward()
@@ -112,51 +142,77 @@ class WRMTrainer:
             self.optimizer.step()
             self.scheduler.step()
 
-        total_losses = (total_losses * gold_risks.size(0)) / n_samples
-        stats = self.metrics.compute()
-        self.metrics.reset() 
-        return (
-            total_losses,
-            stats["longitudinal_error"],
-            stats["lateral_error"],
-            lr_used
-        )
+        mean_tot_loss = ep_total_loss / n_samples
+        mean_ign_loss = ep_ign_loss / n_samples
+        mean_cause_loss = ep_cause_loss / n_samples
+
+        return mean_tot_loss, mean_ign_loss, mean_cause_loss, lr_used
     
-    def eval_epoch(self):
+    def eval_epoch(self, calibration = False):
         self.model.eval()
-        total_losses = torch.zeros((1, 6), dtype=torch.float32, device=self.device)
+        ep_total_loss = 0.0
+        ep_ign_loss = 0.0
+        ep_cause_loss = 0.0
         n_samples = 0
 
+        ign_logits_record = []
+        ign_labels_record = []
+
         with torch.inference_mode():
-            for batch in tqdm(self.val_loader, desc="Evaluating...", leave=False):
-                images = batch["image"].to(self.device)
+            for features, golds, masks in tqdm(self.val_loader, desc="Evaluating...", leave=False):
+                features = features.to(self.device)
+                golds = { k: v.to(self.device) for k, v in golds.items() }
+                masks = { k: v.to(self.device) for k, v in masks.items() }
                 
                 # Run model
                 with autocast(device_type=self.device.type, enabled=self.use_amp):
-                    ignition_logits, cause_logits = self.model(images)
+                    ign_logits, cause_logits = self.model(features)
+                    ign_golds = golds["ign_next"]
+                    cause_golds = golds["ign_next_cause"]
 
-                    # left, right = batch["track_left"].to(self.device), batch["track_right"].to(self.device) # (B, n_track, 2)
-                    gold_wps = batch["waypoints"].to(self.device) # (B, n_waypoints, 2)
-                    wps_mask = batch.get("waypoints_mask", None).to(self.device).bool() # (B, n_waypoints) 
-                    losses: torch.Tensor = self._compute_loss(preds=y_pred_wps, targets=gold_wps, fire_mask=wps_mask)
+                    tot_loss, ign_loss, cause_loss = self._compute_loss(
+                        ign_logits, ign_golds, cause_logits, cause_golds,
+                        masks["act_fire_mask"], masks["water_mask"]
+                    )
 
-                total_losses += losses.detach()
-                n_samples += gold_wps.size(0)
-                self.metrics.add(ignition_logits.detach(), cause_logits.detach(), gold_wps, wps_mask)
+                # Log total loss for epoch
+                ep_total_loss += tot_loss.item()
+                ep_ign_loss += ign_loss.item()
+                ep_cause_loss += cause_loss.item()
+                n_samples += golds["ign_next"].size(0)
 
-        total_losses = (total_losses * gold_wps.size(0)) / n_samples
-        stats = self.metrics.compute()
-        self.metrics.reset()
-        return (
-            total_losses,
-            stats["ce_error"],
-        )
+                if calibration:
+                    # same as in loss function
+                    ign_mask_flat = (masks["water_mask"] == 1) & (masks["act_fire_mask"] == 1).bool()
+                    # record flattened masked logits to record
+                    ign_logits_flat_masked = ign_logits.squeeze(1)[ign_mask_flat]
+                    ign_labels_flat_masked = ign_golds.squeeze(1)[ign_mask_flat]
+                    ign_logits_record.append(ign_logits_flat_masked.detach().cpu())
+                    ign_labels_record.append(ign_labels_flat_masked.detach().cpu())
+                
+                # log metrics
+                self.metrics['ign'].compute_step(ign_logits.detach().cpu(), ign_golds.detach().cpu())
+                self.metrics['ign_cause'].compute_step(cause_logits.detach().cpu(), cause_golds.detach().cpu())
+                self.metrics['ign_matrix'].compute_step(ign_logits.detach().cpu(), ign_golds.detach().cpu())
 
-    def run(self):
+        mean_tot_loss = ep_total_loss / n_samples
+        mean_ign_loss = ep_ign_loss / n_samples
+        mean_cause_loss = ep_cause_loss / n_samples
+
+        if calibration and ign_logits_record:
+            all_logits = torch.cat(ign_logits_record, dim=0)
+            all_labels = torch.cat(ign_labels_record, dim=0)
+
+        for k in self.metrics.keys():
+            self.metrics[k].compute_step()
+
+        return mean_tot_loss, mean_ign_loss, mean_cause_loss, all_logits, all_labels
+
+    def train(self, mode: Literal['training', 'testing'] = 'training'):
         self.optimizer = optim.AdamW(
             self.model.parameters(), 
             lr=self.base_lr, 
-            weight_decay=weight_decay
+            weight_decay=self.weight_decay
         )
         self.scheduler = WarmupCosineAnnealingLR(
             self.optimizer, 
@@ -165,7 +221,7 @@ class WRMTrainer:
             min_lr=self.min_lr
         )
 
-        best = { 'epoch': 0, 'score': float("inf"), 'ce_err': float('inf') }
+        best = { 'epoch': 0, 'score': float("inf"), 'ign_err': float('inf') }
         no_improve = 0
         time0 = perf_counter()
 
@@ -173,30 +229,27 @@ class WRMTrainer:
             f"- model size: {estimate_model_size_mb(self.model):.2f}mb\n",
             f"- epochs: {self.ep_warmup} (warmup) {self.ep_max} (total) {self.ep_early_stop} (early stop)\n",
             f"- batch size: {batch_size}\n",
-            f"- min lr: {self.min_lr}, base lr: {self.base_lr}, grad clip: {grad_clip}, weight decay: {weight_decay}\n",
+            f"- min lr: {self.min_lr}, base lr: {self.base_lr}, grad clip: {self.grad_clip}, weight decay: {self.weight_decay}\n",
         )
 
         for epoch in range (1, self.ep_max + 1):
-            tr_losses, _, _, lr_used = self.train_epoch(epoch)
-            (tr_loss_tot, tr_loss_ign, tr_loss_cause) = tr_losses.squeeze(0)
-            
-            va_losses, va_ce_err = self.eval_epoch()
-            (va_loss_tot, va_loss_ign, va_loss_cause) = va_losses.squeeze(0)
+            trn_m_tot_loss, trn_m_ign_loss, trn_m_cause_loss, lr_used = self.train_epoch()
+            val_m_tot_loss, val_m_ign_loss, val_m_cause_loss, _, _ = self.eval_epoch()
 
             # score as shared normalized max over longitudinal and lateral error from goal
-            score = va_ce_err
+            score = val_m_tot_loss
             new_best = score < best['score']
             save_best = False # new_best and va_lon_err < lon_err_goal and va_lat_err < lat_err_goal
 
             print(f"[Epoch {epoch}] (lr: {lr_used:.6f})\n"
-                f"Train >> L (total): {tr_loss_tot:.4f}, L (ignition):{tr_loss_ign:.4f}, L (cause):{tr_loss_cause:.3f}\n"
-                f"Val   >> L (total): {va_loss_tot:.4f}, L (ignition):{va_loss_ign:.4f}, L (cause):{va_loss_cause:.3f}\n",
+                f"Train >> mL (total): {trn_m_tot_loss:.4f}, mL (ignition): {trn_m_ign_loss:.4f}, mL (cause): {trn_m_cause_loss:.3f}\n"
+                f"Val   >> mL (total): {val_m_tot_loss:.4f}, mL (ignition): {val_m_ign_loss:.4f}, mL (cause): {val_m_cause_loss:.3f}\n",
                 f"         SCORE:{score:.4f}"
             )
 
             if new_best:
                 best['epoch'] = epoch
-                best['ce_err'] = va_ce_err
+                best['ign_err'] = val_m_ign_loss
                 no_improve = 0
             else:
                 no_improve += 1
@@ -205,16 +258,20 @@ class WRMTrainer:
                     break
 
             if new_best and not save_best:
-                print(f"NEW BEST! >> ce. err={va_ce_err:.4f} SCORE={score:.5f}\n")
-            
+                print(f"NEW BEST! >> ce. err={val_m_ign_loss:.4f} SCORE={score:.5f}\n")
             if save_best:
-                print(f"NEW BEST! >> Beat ce. error < {va_ce_err}! Saving model\n")
+                print(f"NEW BEST! >> Beat ce. error < {val_m_ign_loss}! Saving model\n")
                 save_model(self.model)
-            
+
         elapsed_min = (perf_counter() - time0) // 60
         elapsed_sec = (perf_counter() - time0) % 60
         print(f"Finished training in {elapsed_min:.0f} min {elapsed_sec:.0f} sec")
         print(f"Best score @epoch {best['epoch']} >> score: {best['score']:.5f}, lat. err: {best['lat_err']:.5f}, lon. err: {best['lon_err']:.5f}")
+
+        # Do some plotting and fun visualizations!
+        ign_accuracies = self.metrics['ign'].record
+        cause_accuracies = self.metrics['ign_cause'].record
+        (fTPR, fTNR, fFPR, fFNR), (rTPR, rTNR, rFPR, rFNR) = self.metrics['ign_matrix'].compute_rates()
 
 
 if __name__ == "__main__":
@@ -260,7 +317,7 @@ if __name__ == "__main__":
         model_params = {
             "in_channels": in_channels, "embed_dim": embed_dim,
             # Windowed Spatial Mixing
-            "ws_n_heads": ws_n_heads, "ws_window_size": ws_window_size,
+            "ws_n_heads": ws_n_heads, "ws_win_size": ws_window_size,
             # Channel Mixing
             "cm_n_heads": cm_n_heads,
             "cm_n_channels": cm_n_channels, "cm_d_model": cm_d_model,
@@ -275,6 +332,8 @@ if __name__ == "__main__":
         lrs = lrs,
         weight_decay = weight_decay,
         grad_clip = 1.0,
-        debug = True,
-        num_workers = workers,
+        debug = True
     )
+
+    wrm_trainer.train()
+    # wrm_trainer.test()

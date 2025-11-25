@@ -1,6 +1,6 @@
 # https://earthaccess.readthedocs.io/en/stable/
 from pathlib import Path
-from typing import Tuple, List
+from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import xarray as xr
 import pandas as pd
@@ -11,7 +11,7 @@ from earthaccess import DataGranule
 
 from fire_fusion.config.feature_config import Feature
 from fire_fusion.config.path_config import MODIS_DIR
-from ..dataset.feature_utils import load_as_xarr
+from fire_fusion.utils.utils import load_as_xarr
 from processor import Processor
 
 class Modis(Processor):

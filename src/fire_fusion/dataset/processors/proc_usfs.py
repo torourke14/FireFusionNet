@@ -6,9 +6,9 @@ import pandas as pd
 import geopandas as gpd
 from rasterio.features import rasterize
 
-from fire_fusion.config.feature_config import CAUSAL_CLASSES, CAUSE_MAP, Feature
-from fire_fusion.config.path_config import USFS_DIR
 from processor import Processor
+from fire_fusion.config.feature_config import CAUSAL_CLASSES, CAUSE_RAW_MAP, Feature
+from fire_fusion.config.path_config import USFS_DIR
 
 
 class UsfsFire(Processor):
@@ -147,7 +147,7 @@ class UsfsFire(Processor):
             val = str(raw).strip().lower()
             if val == "": return "UNKNOWN"
 
-            for cls, keywords in CAUSE_MAP.items():
+            for cls, keywords in CAUSE_RAW_MAP.items():
                 for kw in keywords:
                     if kw in val:
                         return cls
