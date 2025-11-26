@@ -1,4 +1,5 @@
 # https://earthaccess.readthedocs.io/en/stable/
+from multiprocessing import AuthenticationError
 from pathlib import Path
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,15 +12,23 @@ from earthaccess import DataGranule
 
 from fire_fusion.config.feature_config import Feature
 from fire_fusion.config.path_config import MODIS_DIR
-from fire_fusion.utils.utils import load_as_xarr
-from processor import Processor
+from fire_fusion.utils.utils import load_as_xdataset
+from .processor import Processor
 
 class Modis(Processor):
-    def __init__(self, cfg, master_grid, mCRS):
-        super().__init__(cfg, master_grid, mCRS)
-        self.auth = earthaccess.login(persist=True)
+    def __init__(self, cfg, master_grid):
+        super().__init__(cfg, master_grid)
 
-        self.latlon_tup = (self.gridref.lon_min, self.gridref.lat_min, self.gridref.lon_max, self.gridref.lat_max)
+        self.auth = earthaccess.login(strategy="netrc", persist=True)
+        if self.auth.username:
+            print(f"Logged into EARTH DATA for {self.auth.username}")
+        else:
+            raise AuthenticationError("EARTH DATA credentials via root _netrc file not found")
+        
+        self.latlon_tup = (
+            self.gridref.attrs['lon_min'], self.gridref.attrs['lat_min'],
+            self.gridref.attrs['lon_max'], self.gridref.attrs['lat_max']
+        )
         MODIS_DIR.mkdir(exist_ok=True, parents=True)
 
         # Granule HDF file names are formatted as "<poduct>/<year>/<day-of-year>/<granule-files>.hdf
@@ -27,46 +36,48 @@ class Modis(Processor):
         # We only want tiles that overlay the Pacific Northwest, which covers the below h/v indices
         self.tiles = ["h08v04", "h08v05", "h09v04", "h09v05", "h10v04"]
         self.version = "061"
-        self.max_parallel_req = 6
+        self.max_parallel_req = 5
         
     
-    def build_feature(self, f_config: Feature):
-        feat_by_year: list[xr.DataArray] = []
-        years = list(self.gridref.time_index.year.unique())
+    def build_feature(self, f_cfg: Feature) -> xr.Dataset:
+        feature_by_yr = xr.Dataset()
     
         with ThreadPoolExecutor(max_workers=self.max_parallel_req) as executor:
-            if f_config.key == "MOD13Q1":
-                print("Purchasing satellite to collect more data...")
+            if f_cfg.key == "MOD13Q1":
+                print("[LAADS] Purchasing satellite to collect more data...")
                 requests = {
-                    executor.submit(self._fetch_ndvi, f_config, yr): yr 
-                    for yr in years
+                    executor.submit(self._fetch_ndvi, f_cfg, yr): yr 
+                    for yr in self.gridref.attrs['years']
                 }
-            elif f_config.key == "MCD15A2H":
-                print(f"Waiting patiently for satellite to arrive")
+            elif f_cfg.key == "MCD15A2H":
+                print(f"[LAADS] Waiting patiently for satellite to arrive")
                 requests = {
-                    executor.submit(self._fetch_lai, f_config, yr): yr 
-                    for yr in years
+                    executor.submit(self._fetch_lai, f_cfg, yr): yr 
+                    for yr in self.gridref.attrs['years']
                 }
-            elif f_config.key == "MCD64A1":
-                print(f"This thing is awesome!")
+            elif f_cfg.key == "MCD64A1":
+                print(f"[LAADS] This thing is awesome!")
                 requests = {
-                    executor.submit(self._fetch_burns, f_config, yr): yr 
-                    for yr in years
+                    executor.submit(self._fetch_burns, f_cfg, yr): yr 
+                    for yr in self.gridref.attrs['years']
                 }
             
             for req in as_completed(requests):
                 yr = requests[req]
                 try:
                     year_data = req.result()
-                    feat_by_year.append(year_data)
+                    feature_by_year = xr.merge([ feature_by_year, year_data ], join="outer")
+                    # feature_by_yr[f_cfg.name] = year_data
                 except Exception as e:
-                    print(f"Satellite broke... heading back to {yr}: {e}")
-        
-        feat_data = xr.concat(feat_by_year, dim="time").sortby("time")
-        feat_data = self._time_interpolate(feat_data, f_config.time_interp)
-        feat_data = feat_data.transpose("time", "lat", "lon")
-        feat_data.name = f_config.name
-        return feat_data
+                    print(f"[LAADS] Satellite broke... heading back to {yr}: {e}")
+        # -----------------------------------------------------------------------
+
+        print("feature building finished")
+        feature_by_yr = feature_by_yr.sortby("time")
+        feature_by_yr = self._time_interpolate(feature_by_yr, f_cfg.time_interp)
+        feature_by_yr = feature_by_yr.transpose("time", "y", "x")
+        feature_by_yr.name = f_cfg.name
+        return feature_by_yr
     
     def _parse_date(self, filename):
         """ 
@@ -84,14 +95,17 @@ class Modis(Processor):
         return datetime(year, 1, 1) + timedelta(days=doy - 1)
     
 
-    def _fetch_ndvi(self, f_cfg: Feature, year: int) -> xr.DataArray:
+    def _fetch_ndvi(self, f_cfg: Feature, year: int) -> xr.Dataset:
         nc_files = self._fetch_year(short_name=f_cfg.key or "", year=year)
-        year_data = []
+        year_data: List[xr.DataArray] = []
 
         for fp in nc_files:
-            with load_as_xarr(file=fp, name=f_cfg.name) as raw:
-                arr = self._preclip_native(raw)
-                arr = self._reproject_to_mgrid(arr, f_cfg.resampling)
+            with load_as_xdataset(
+                file=fp, grid="MODIS_Grid_16DAY_250m_500m_VI",
+                variables=["250m 16 days NDVI", "250m 16 days VI Quality"]
+            ) as raw:
+                arr = self._preclip_native_dataset(raw)
+                arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
                 """ -----------------------------------------------------------------------------------
                     NOTE: BELOW BIT PARSING DONE SOLELY BY CHATGPT; 
@@ -123,21 +137,25 @@ class Modis(Processor):
                 ndvi = scale_factor * (ndvi - add_offset)
                 """ ------------------------------------------------------------------------------- """
 
-            ts = pd.Timestamp(self._parse_date(fp))
+            ts = pd.Timestamp(self._parse_date(str(fp.name)))
             ndvi = ndvi.expand_dims(time=[ts])
             year_data.append(ndvi)
 
-        return xr.concat(year_data, dim="time").sortby("time")
+        print("fetch ndvi end")
+        return xr.concat(year_data, dim="time").to_dataset(name=f_cfg.name)
         
     
-    def _fetch_lai(self, f_cfg: Feature, year: int) -> xr.DataArray:
+    def _fetch_lai(self, f_cfg: Feature, year: int) -> xr.Dataset:
         nc_files = self._fetch_year(f_cfg.key or "", year)
-        year_data = []
+        year_data: List[xr.DataArray] = []
 
         for fp in nc_files:
-            with load_as_xarr(file=fp, name=f_cfg.name) as raw:
-                arr = self._preclip_native(raw)
-                arr = self._reproject_to_mgrid(arr, f_cfg.resampling)
+            with load_as_xdataset(
+                file=fp, grid="MOD_Grid_MOD15A2H",
+                variables=["Lai_500m", "FparLai_QC", "FparExtra_QC"]
+            ) as raw:
+                arr = self._preclip_native_dataset(raw)
+                arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
                 """ -----------------------------------------------------------------------------------
                     NOTE: BELOW BIT PARSING DONE SOLELY BY CHATGPT; 
@@ -166,7 +184,7 @@ class Modis(Processor):
                 no_snow   = snow_ice == 0
                 no_clouds = (int_cloud == 0) & (shadow == 0)
 
-                lai = lai.where(modland_good & clouds_ok & retrieval_ok & land_ok & no_snow & no_clouds)
+                lai: xr.DataArray = lai.where(modland_good & clouds_ok & retrieval_ok & land_ok & no_snow & no_clouds)
 
                 # Scale factor and offset
                 scale_factor = float(lai.attrs.get("scale_factor", 0.1))
@@ -174,21 +192,25 @@ class Modis(Processor):
                 lai = scale_factor * (lai - add_offset)
                 """ ------------------------------------------------------------------------------- """
 
-            ts = pd.Timestamp(self._parse_date(fp))
+            ts = pd.Timestamp(self._parse_date(str(fp.name)))
             lai = lai.expand_dims(time=[ts])
             year_data.append(lai)
 
-        return xr.concat(year_data, dim="time").sortby("time")
+        print("fetch lai  end")
+        return xr.concat(year_data, dim="time").to_dataset(name=f_cfg.name)
     
 
-    def _fetch_burns(self, f_cfg: Feature, year: int) -> xr.DataArray:
+    def _fetch_burns(self, f_cfg: Feature, year: int) -> xr.Dataset:
         nc_files = self._fetch_year(f_cfg.key or "", year)
-        year_data = []
+        year_data: List[xr.DataArray] = []
 
         for fp in nc_files:
-            with load_as_xarr(file=fp, name=f_cfg.name) as raw:
-                arr = self._preclip_native(raw)
-                arr = self._reproject_to_mgrid(arr, f_cfg.resampling)
+            with load_as_xdataset(
+                file=fp, grid="MOD_Grid_Monthly_500m_DB_BA",
+                variables=["Burn Date", "QA"]
+            ) as raw:
+                arr = self._preclip_native_dataset(raw)
+                arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
                 """ -----------------------------------------------------------------------------------
                     NOTE: BELOW BIT PARSING DONE SOLELY BY CHATGPT; 
@@ -205,76 +227,68 @@ class Modis(Processor):
                 burn_mask = (burn > 0).astype("float32")
                 """ ------------------------------------------------------------------------------- """
 
-            ts = pd.Timestamp(self._parse_date(fp))
+            ts = pd.Timestamp(self._parse_date(str(fp.name)))
             burn_mask = burn_mask.expand_dims(time=[ts])
             year_data.append(burn_mask)
 
-        return xr.concat(year_data, dim="time").sortby("time")
+        print("fetch burn end")
+        return xr.concat(year_data, dim="time").to_dataset(name=f_cfg.name)
+
+
+    # ----------------------------------------------------------------------
+    # Fetching
+    # ----------------------------------------------------------------------
+    def _get_hdf_links(self, granules: List[DataGranule]) -> List[str]:
+        """ Get unique HDF download link for a list of granules """
+        links: list[str] = []
+        seen = set()
+        for g in granules:
+            for u in g["umm"].get("RelatedUrls", []):
+                t = u.get("Type","")
+                url = str(u.get("URL",""))
+                if t == "GET DATA" and url.startswith("https") and url.lower().endswith(".hdf"):
+                    seen.add(url)
+                    links.append(url)
+        return links
 
     def _granule_pattern(self, short_name, tile):
-        return f"{short_name}*.{tile}*.hdf"
-          #    f"{short_name}.*.{tile}.*.hdf"
-          #    f"{short_name}.*.{tile}.*.hdf"
-
-    def _get_hdf_links(self, granules: List[DataGranule]) -> List[str]:
-        """ 
-        Get unique HDF download link for a list of granules
-        """
-        def _get_granule_hdf_urls(granule) -> List[str]:
-            # Get the .hdf file link (what we want to download)
-            urls = granule["umm"].get("RelatedUrls", [])
-            for u in urls:
-                if u.get("Type") == "GET DATA VIA DIRECT ACCESS" and u["URL"].endswith(".hdf"):
-                    return u["URL"]
-            for u in urls:
-                if u.get("Type") == "GET DATA" and u["URL"].endswith(".hdf"):
-                    return u["URL"]
-            return list()
-        
-        lookup= list()
-        for g in granules:
-            gid = g["meta"]["native-id"]
-            if not gid:
-                gid = g["umm"].get("GranuleUR", "")
-            if not gid:
-                gid = g["umm"]["DataGranule"]["Identifiers"][0].get('Identifier', "")
-            if gid:
-                lookup.extend(_get_granule_hdf_urls(g))
-        return lookup
+        return f"{short_name}.*.{tile}.*"
 
     def _fetch_year(self, short_name: str, year: int) -> List[Path]:
-        """ fetch data for a given product and year
-            return Path to existing/fetched .nc file
-        """
-        product_folder = MODIS_DIR / f"{short_name}.{year}"
+        """ fetch data for a given product and year, return Path to existing/fetched .nc file"""
+        if not short_name or not year:
+            return []
 
-        ex_files = list(product_folder.glob("*.nc"))
-        if ex_files:
-            print(f"Found my yearbook from {year}, DAMN I look good..")
+        product_folder = MODIS_DIR / f"{short_name}.{year}"
+        ex_files = list(product_folder.glob("*.hdf"))
+        if ex_files and all([f.name.startswith(f"{short_name}.A{year}") for f in ex_files]):
+            print(f"[LAADS] NASA Found my yearbook from {year}, DAMN I look good..")
             return ex_files
         
         comb_results = []
-        time_range = (f"{str(year)}-01-01", f"{str(year)}-12-31")
         for tile in self.tiles:
-            print("")
             wildcard = self._granule_pattern(short_name, tile)
             granules = earthaccess.search_data(
-                short_name=short_name, version=self.version,
-                granule_name=wildcard, temporal=time_range,
+                short_name=short_name, 
+                version=self.version,
+                granule_name=wildcard, 
+                temporal=(f"{str(year)}-01-01", f"{str(year)}-12-31"),
+                day_night_flag="day",
                 bounding_box=self.latlon_tup,
-                downloadable=True, cloud_hosted=True, count=-1
+                downloadable=True, 
+                count=-1,
             )
-            if len(granules) > 0:
-                comb_results.extend(granules)
-
+            if len(granules) > 0: comb_results.extend(granules)
+        
         if not comb_results:
-            print(f"Told my satellite {short_name} was cooler")
+            print(f"[LAADS] Told my satellite that {short_name} was cooler, they werent happy..")
             return list()
         
-        print("Adding secret tensors for a fun surprise (JK)")
+        unq_links = self._get_hdf_links(comb_results)
+        print(f"[LAADS] downloading using {len(unq_links)} links (from {len(granules)} granules) for {year}")
 
         dl_file_paths = earthaccess.download(
-            granules=self._get_hdf_links(comb_results), 
+            granules=unq_links, 
             local_path=product_folder, 
             show_progress=True
         )

@@ -9,9 +9,9 @@ import xarray as xr
 from numcodecs import Blosc
 
 from .data_loader import FireDataset
-from .grid import Grid
-from ..config.path_config import TRAIN_DATA_DIR, EVAL_DATA_DIR, TEST_DATA_DIR
-from ..config.feature_config import Feature, base_feat_config
+from .grid import create_coordinate_grid
+from fire_fusion.config.path_config import TRAIN_DATA_DIR, EVAL_DATA_DIR, TEST_DATA_DIR
+from fire_fusion.config.feature_config import Feature, base_feat_config
 
 from .processors.processor import Processor
 from .processors.proc_derived_feats import DerivedProcessor
@@ -23,15 +23,16 @@ from .processors.proc_nlcd import NLCD
 from .processors.proc_usfs import UsfsFire
 from .processors.proc_croads import CensusRoads
 
+xr.set_options(use_new_combine_kwarg_defaults=True)
 
-PROCESSORS = {
-    "LANDFIRE": Landfire,
-    "NLCD": NLCD,
-    "GPW": GPW,
-    "MODIS": Modis,
-    "GRIDMET": GridMet,
+PROC_CLASSES = {
+    "CENSUSROADS": CensusRoads,
     "FIRE_USFS": UsfsFire,
-    "CENSUSROADS": CensusRoads
+    "GPW": GPW, #CHECK
+    "GRIDMET": GridMet,
+    "LANDFIRE": Landfire, #CHECK
+    "MODIS": Modis,
+    "NLCD": NLCD, #CHECLK
 }
 
 # -----------------------------------------------------------------------------------
@@ -44,7 +45,7 @@ class FeatureGrid:
         - Concatenates features and projects their data onto a shared grid
     """
     def __init__(self,
-        mode: Literal["build", "load", "test"],
+        mode: Literal["build", "load"],
         device = None,
         # required for loading
         batch_size = 4,
@@ -69,7 +70,6 @@ class FeatureGrid:
             for k, features in self.fconfig.items() for f in features
             if k not in ["LABELS", "MASKS"]
         }
-        
         self.label_names = [ l.name for l in self.fconfig["LABELS"]]
         self.mask_names = [ l.name for l in self.fconfig["MASKS"]]
 
@@ -111,21 +111,27 @@ class FeatureGrid:
         
         # --- Building --------------------
         self.time_index = pd.date_range(start_date, end_date, freq="D")
-        self.grid: xr.DataArray = Grid(
+        self.grid = create_coordinate_grid(
             self.time_index,
             resolution,
             lat_bounds, lon_bounds
         )
+
+        print(f"Grid Created:")
+        print(f"- y-coordinates: ({self.grid.attrs['y_min']:.5f}, {self.grid.attrs['y_min']:.5f})")
+        print(f"- x-coordinates: ({self.grid.attrs['x_min']:.5f}, {self.grid.attrs['x_max']:.5f})")
+
         self.master_ds = xr.Dataset(
             coords={
-                "time": self.grid.time_index,
-                "y": self.grid.y_coordinates,
-                "x": self.grid.x_coordinates
+                "time": self.grid.attrs['time_index'],
+                "y": self.grid.attrs['y_coordinates'],
+                "x": self.grid.attrs['x_coordinates']
             }
         )
         self.processors: Dict[str, Processor] = {
-            name: PROCESSORS[name](features, self.grid, self.grid.crs)
-            for name, features in self.base_features_dict.items()
+            pname: PROC_CLASSES[pname](features, self.grid)
+            for pname, features in self.fconfig.items()
+            if pname not in ["DERIVED", "LABELS", "MASKS"]
         }
         
         self.build_features()
@@ -182,15 +188,16 @@ class FeatureGrid:
         for src, processor in self.processors.items():
             features: list[Feature] = processor.cfg
 
-            print(f"=== {src} =====================================================\n")
+            print(f"\n=== Building {src} data ===")
             for config in features:
                 try:
+                    print(f"\n--- Building {config.name}...")
                     layer = processor.build_feature(config)
-                    self.master_ds = self.master_ds.assign({ f"{config.name}": layer })
+                    self.master_ds = xr.merge([self.master_ds, layer], join="outer")
                 except Exception as e:
                     print(f"Oh no! {src} processor failed with: {e}")
-
-        
+                    return
+                    
         # --- ADD DERIVED FEATURES AND LABELS
         print(f"Deriving anti-arson techniques through feature derivation..")
         drv_processor = DerivedProcessor(
@@ -199,29 +206,29 @@ class FeatureGrid:
         )
         self.master_ds, _, _ = drv_processor.derive_features(self.master_ds)
 
-        # # drop derivative features (not needed anymore)
-        drop_names = [cfg.name for cfg in self.base_features_dict.values() if cfg.drop == True]
-        self.master_ds = self.master_ds.drop_vars(drop_names)
+        # # # drop derivative features (not needed anymore)
+        # drop_names = [cfg.name for cfg in self.base_features_dict.values() if cfg.drop == True]
+        # self.master_ds = self.master_ds.drop_vars(drop_names)
 
-        # sanity crop
-        for var in self.master_ds.data_vars:
-            da = self.master_ds[var]
-            if "x" in da.dims and "y" in da.dims:
-                da = da.sel(x=slice(self.grid.x_min, self.grid.x_max), 
-                            y=slice(self.grid.y_min, self.grid.y_max))
-                self.master_ds[var] = da
+        # # sanity crop
+        # for var in self.master_ds.data_vars:
+        #     da = self.master_ds[var]
+        #     if "x" in da.dims and "y" in da.dims:
+        #         da = da.sel(x=slice(self.grid.attrs['x_min'], self.grid.attrs['x_max']), 
+        #                     y=slice(self.grid.attrs['y_min'], self.grid.attrs['y_max']))
+        #         self.master_ds[var] = da
 
-        print(f"Baking some cookies...")
-        print(f"Baking some muffins...")
+        # print(f"Baking some cookies...")
+        # print(f"Baking some muffins...")
 
-        # fill nans
-        self.master_ds = self._mask_nan()
+        # # fill nans
+        # self.master_ds = self._mask_nan()
 
-        # normalize features
-        for f in self.master_ds.data_vars:
-            if f in self.mask_names or f in self.label_names:
-                continue
-            self.master_ds[f] = self._normalize(self.master_ds[f], name=str(f))
+        # # normalize features
+        # for f in self.master_ds.data_vars:
+        #     if f in self.mask_names or f in self.label_names:
+        #         continue
+        #     self.master_ds[f] = self._normalize(self.master_ds[f], name=str(f))
 
         # self.save_splits_zarr(self.master_ds)
 

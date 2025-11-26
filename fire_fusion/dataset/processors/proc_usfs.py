@@ -6,41 +6,42 @@ import pandas as pd
 import geopandas as gpd
 from rasterio.features import rasterize
 
-from processor import Processor
+from .processor import Processor
 from fire_fusion.config.feature_config import CAUSAL_CLASSES, CAUSE_RAW_MAP, Feature
 from fire_fusion.config.path_config import USFS_DIR
 
 
 class UsfsFire(Processor):
-    def __init__(self, cfg, master_grid, mCRS):
-        super().__init__(cfg, master_grid, mCRS)
+    def __init__(self, cfg, master_grid):
+        super().__init__(cfg, master_grid)
     
-    def build_feature(self, f_config: Feature):
-        if f_config.key == "Fire_Occurence":
+    def build_feature(self, f_cfg: Feature) -> xr.Dataset:
+        if f_cfg.key == "Fire_Occurence":
             print(f"\n[USFS] computing fire occurence layer")
             file = USFS_DIR / "National_USFS_Fire_Occurrence_Point_(Feature_Layer).shp"
-            layer = self._build_occ_layer(file, f_config)
+            layer = self._build_occ_layer(file, f_cfg)
 
-        elif f_config.key == "Fire_Perimeter":
+        elif f_cfg.key == "Fire_Perimeter":
             print(f"\n[USFS] computing fire perimeter")
             file = USFS_DIR / "National_USFS_Fire_Perimeter_(Feature_Layer).shp"
-            layer = self._build_perim_layer(file, f_config)
+            layer = self._build_perim_layer(file, f_cfg)
 
-        elif f_config.key == "Fire_Cause":
+        elif f_cfg.key == "Fire_Cause":
             print(f"\n[USFS] computing fire cause layer")
             file = USFS_DIR / "National_USFS_Fire_Occurrence_Point_(Feature_Layer).shp"
-            layer = self._build_statcause_layer(file, f_config)
+            layer = self._build_statcause_layer(file, f_cfg)
    
-        layer = self._time_interpolate(layer, f_config.time_interp)
+        layer = layer.to_dataset(name=f_cfg.name, dim="time").sortby("time")
+        layer = self._time_interpolate(layer, f_cfg.time_interp)
         layer = layer.transpose("time", "y", "x")
         return layer
         
     
-    def _build_occ_layer(self, fp: Path, f_config: Feature):
+    def _build_occ_layer(self, fp: Path, f_cfg: Feature) -> xr.DataArray:
         fires_gdf = gpd.read_file(fp).to_crs(self.mCRS)
         fires_gdf = gpd.clip(fires_gdf, box(
-            self.gridref.lon_min, self.gridref.lat_min, 
-            self.gridref.lon_max, self.gridref.lat_max
+            self.gridref.attrs['x_min'], self.gridref.attrs['y_min'], 
+            self.gridref.attrs['x_max'], self.gridref.attrs['y_max']
         ))
 
         height = len(self.gridref.y)
@@ -57,15 +58,15 @@ class UsfsFire(Processor):
         
         # --- create new index with discovery dates
         time2index = pd.Series(
-            np.arange(len(self.gridref.time_index)), 
-            index=self.gridref.time_index
+            np.arange(len(self.gridref.attrs['time_index'])), 
+            index=self.gridref.attrs['time_index']
         )
         fires_gdf["t_idx"] = time2index.reindex(discovery_dates).values
         fires_gdf["t_idx"] = fires_gdf["t_idx"].dropna().astype("int32")
 
         # --- rsterize each reindex'd time slice separately
         out = np.zeros(
-            (len(self.gridref.time_index), height, width), 
+            (len(self.gridref.attrs['time_index']), height, width), 
             dtype="uint8"
         )
 
@@ -77,27 +78,31 @@ class UsfsFire(Processor):
                 out_shape=(height, width),
                 transform=self.gridref.transform,
                 fill=0,
-                all_touched=True,       # SIMPLEST LOGIC: any-touch = 1
+                all_touched=True,
                 dtype="uint8"
             )
             out[int(t_idx)] = mask
 
         occ_txy = xr.DataArray(
-            data = out & qa_mask,
-            coords={ "time": self.gridref.time_index, "y": self.gridref.y, "x": self.gridref.x },
+            data=out & qa_mask,
+            coords={ 
+                "time": self.gridref.attrs['time_index'], 
+                "y": self.gridref.y,
+                "x": self.gridref.x
+            },
             dims=("time", "y", "x"),
-            name="fire_occurrence_binary"
+            name=f_cfg.name
         )
         occ_txy = occ_txy.rio.write_crs(self.gridref.rio.crs)
         occ_txy = occ_txy.rio.write_transform(self.gridref.rio.transform())
         return occ_txy
 
 
-    def _build_perim_layer(self, fp: Path, f_config: Feature, ignition_threshold = 0.05, oversample = 4):
+    def _build_perim_layer(self, fp: Path, f_cfg: Feature, ignition_threshold = 0.05, oversample = 4) -> xr.DataArray:
         fires_gdf = gpd.read_file(fp).to_crs(self.mCRS)
         fires_gdf = gpd.clip(fires_gdf, box(
-            self.gridref.lon_min, self.gridref.lat_min, 
-            self.gridref.lon_max, self.gridref.lat_max
+            self.gridref.attrs['x_min'], self.gridref.attrs['y_min'], 
+            self.gridref.attrs['x_max'], self.gridref.attrs['y_max']
         ))
 
         height = len(self.gridref.y)
@@ -112,53 +117,60 @@ class UsfsFire(Processor):
         qa_mask = xr.apply_ufunc(np.where, (fires_gdf["QA"].astype(int) > 2, -1))
 
         out_grid = np.zeros(
-            (len(self.gridref.time_index), height, width), 
+            (len(self.gridref.attrs['time_index']), height, width), 
             dtype="uint8"
         )
         for year, subset in fires_gdf.groupby("_year"):
-            t_idxs = np.where(self.gridref.time_index.year == year)[0]
+            t_idxs = np.where(self.gridref.attrs['time_index'].year == year)[0]
             if len(t_idxs) == 0:
                 continue
 
             shapes = [(geom, 1) for geom in subset.geometry]
             mask = rasterize(shapes,
-                out_shape=(height, width), transform=self.gridref.transform,
-                fill=0, all_touched=True, 
+                out_shape=(height, width),
+                transform=self.gridref.transform,
+                fill=0, 
+                all_touched=True, 
                 dtype="uint8"
             )
 
             out_grid[t_idxs, :, :] = mask[None, :, :]
 
         perim_txy = xr.DataArray(
-            data = out_grid & qa_mask,
-            coords={ "time": self.gridref.time_index, "y": self.gridref.y, "x": self.gridref.x },
+            data=out_grid & qa_mask,
+            coords={
+                "time": self.gridref.attrs['time_index'],
+                "y": self.gridref.y,
+                "x": self.gridref.x
+            },
             dims=("time", "y", "x"),
-            name="fire_perimeter_binary"
+            name=f_cfg.name
         )
         perim_txy = perim_txy.rio.write_crs(self.gridref.rio.crs)
         perim_txy = perim_txy.rio.write_transform(self.gridref.rio.transform())
         return perim_txy
     
 
-    def _build_statcause_layer(self, fp: Path, f_config: Feature):
+    def _build_statcause_layer(self, fp: Path, f_cfg: Feature) -> xr.DataArray:
         def normalize_statcause(raw):
             if raw is None: return "UNKNOWN"
 
             val = str(raw).strip().lower()
-            if val == "": return "UNKNOWN"
+            if val == "":
+                return "UNKNOWN"
 
-            for cls, keywords in CAUSE_RAW_MAP.items():
+            for kls, keywords in CAUSE_RAW_MAP.items():
                 for kw in keywords:
                     if kw in val:
-                        return cls
+                        return kls
 
             # If nothing matched, default to UNKNOWN
             return "UNKNOWN"
 
         fires_gdf = gpd.read_file(fp).to_crs(self.mCRS)
         fires_gdf = gpd.clip(fires_gdf, box(
-            self.gridref.lon_min, self.gridref.lat_min, 
-            self.gridref.lon_max, self.gridref.lat_max
+            self.gridref.attrs['x_min'], self.gridref.attrs['y_min'], 
+            self.gridref.attrs['x_max'], self.gridref.attrs['y_max']
         ))
 
         height = len(self.gridref.y)
@@ -173,10 +185,9 @@ class UsfsFire(Processor):
         qa_mask = xr.apply_ufunc(np.where, (fires_gdf["QA"].astype(int) > 2, -1))
 
         time2index = pd.Series(
-            np.arange(len(self.gridref.time_index)), 
-            index=self.gridref.time_index
+            data=np.arange(len(self.gridref.attrs['time_index'])), 
+            index=self.gridref.attrs['time_index']
         )
-        
         fires_gdf["t_idx"] = time2index.reindex(discovery_dates).to_numpy()
         fires_gdf = fires_gdf[~fires_gdf["t_idx"].isna()].copy()
         fires_gdf["t_idx"] = fires_gdf["t_idx"].astype("int32")
@@ -185,7 +196,7 @@ class UsfsFire(Processor):
         cause_labels = pd.Index(CAUSAL_CLASSES, name="statcause")
 
         out_grid = np.zeros(
-            (len(self.gridref.time_index), len(cause_labels), height, width),
+            (len(self.gridref.attrs['time_index']), len(cause_labels), height, width),
             dtype="uint8",
         )
 
@@ -199,18 +210,26 @@ class UsfsFire(Processor):
             cause_idx = cause_labels.get_loc(cause)
             shapes = [(geom, 1) for geom in fires_group.geometry]
             mask = rasterize(shapes,
-                out_shape=(height, width), transform=self.gridref.transform,
-                fill=0, all_touched=True,
+                out_shape=(height, width), 
+                transform=self.gridref.transform,
+                fill=0, 
+                all_touched=True,
                 dtype="uint8",
             )
             out_grid[int(t_idx), cause_idx] = mask
 
         cause_txy = xr.DataArray(
             data=out_grid & qa_mask,
-            coords={ "time": self.gridref.time_index, "burn_cause": cause_labels, "y": self.gridref.y, "x": self.gridref.x },
+            coords={ 
+                "time": self.gridref.attrs['time_index'], 
+                "burn_cause": cause_labels, 
+                "y": self.gridref.y, "x": self.gridref.x 
+            },
             dims=("time", "burn_cause", "y", "x"),
-            name=f_config.name,
+            name=f_cfg.name
         )
+
         cause_txy = cause_txy.rio.write_crs(self.gridref.rio.crs)
         cause_txy = cause_txy.rio.write_transform(self.gridref.rio.transform())
+
         return cause_txy

@@ -1,16 +1,20 @@
-pytorch==2.8.0
-numpy==-2.2.6
-pandas>=2.3.3
+pytorch == 2.8.0
+numpy == 2.2.6
+pandas >= 2.3.3
 # Grid rasterizing
-xarray>=2025.11.0
-rioxarray>=0.19.0
-rasterio>=1.4.3
-geopandas>=1.1.1
-shapely>=2.1.2
-scipy>=1.16.3
+xarray >= 2025.11.0
+rioxarray >= 0.19.0
+rasterio >= 1.4.3
+geopandas >= 1.1.1
+shapely >= 2.1.2
+scipy >= 1.16.3
 # LAADS API (MODIS)
-earthaccess>=0.9
+earthaccess >= 0.9
 # File I/O
-numcodecs>=0.16.1
-pyhdf>=0.11.6
-hdf4>4.2.15
+numcodecs >= 0.16.1
+pyhdf >= 0.11.6
+hdf4 >= 4.2.15
+
+# plotting (optional)
+matplotlib
+seaborn >= 0.13.2

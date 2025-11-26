@@ -1,10 +1,9 @@
 # Who wants to deal with tuples in JSON, anyways??
 from dataclasses import dataclass
 from rasterio.enums import Resampling
-from typing import Dict, List, Optional, Tuple, Literal
-import numpy as np
+from typing import Dict, List, Optional, Tuple
 from xarray.core.types import InterpOptions
-from path_config import CROADS_DIR, USFS_DIR, GPW_DIR, GRIDMET_DIR, LANDFIRE_DIR, MODIS_DIR, NLCD_DIR
+from .path_config import CROADS_DIR, USFS_DIR, GPW_DIR, GRIDMET_DIR, LANDFIRE_DIR, MODIS_DIR, NLCD_DIR
 
 
 CAUSAL_CLASSES = [
@@ -83,71 +82,10 @@ class Feature:
     ds_norms: Optional[List[str]] = None        # sequence of normalizations done on constructed feature in the CHANNEL
     num_classes: Optional[int] = 0
     one_hot_encode: Optional[bool] = False
-    class_map: Optional[Dict] = {}
 
 def base_feat_config():
     return {
-        "LANDFIRE": [
-            Feature(
-                name = "elevation",
-                key = "_Elev",
-                resampling = Resampling.bilinear,
-                clip = (0, 5000),
-                time_interp = ("time", "linear"),
-                ds_norms = ["z_score"]
-            ),
-            Feature(
-                name = "slope",
-                key = "_SlpD",
-                resampling = Resampling.bilinear,
-                time_interp = ("time", "linear"),
-                ds_norms = ["z_score"]
-            ),
-            Feature(
-                name = "aspect",
-                key = "_Asp",
-                resampling = Resampling.bilinear,
-                time_interp = ("time", "linear"),
-            ),
-            Feature(
-                name = "water_mask",
-                key = "_EVC",
-                resampling = Resampling.nearest,
-                time_interp = ("time", "linear")
-            )
-        ],
-        "NLCD": [
-            Feature(
-                name = "lcov_class",
-                key = "LndCov",
-                resampling = Resampling.nearest,
-                time_interp = ("time", "linear"),
-                num_classes = 9,
-                one_hot_encode = True
-            ),
-            Feature(
-                name = "frac_imp_surface",
-                key = "FctImp",
-                resampling = Resampling.bilinear,
-                time_interp = ("time", "linear"),
-                ds_clip = (0, 1),
-                ds_norms = ["minmax"]
-            ),
-            Feature(
-                name = "canopy_cover_pct",
-                key = "tccconus",
-                resampling = Resampling.bilinear,
-                ds_clip = (0, 1),
-                ds_norms = ["minmax"]
-            )
-        ],
-        "GPW": [
-            Feature(
-                name = "pop_density",
-                resampling = Resampling.bilinear,
-                time_interp = ("time", "linear")
-            )
-        ],
+        ### --- Processors -----------------------------------------
         "MODIS": [
             Feature(
                 name = "modis_ndvi",
@@ -166,7 +104,7 @@ def base_feat_config():
                 time_interp = ("existing", "nearest"),
                 agg_time = 60,
                 agg_center = True,
-                ds_clip=(0, 10),
+                ds_clip=(0.0, 10.0),
                 ds_norms = ["z_score"],
             ),
             Feature(
@@ -177,34 +115,104 @@ def base_feat_config():
                 time_interp = ("existing", "nearest"),
             ),
         ],
+        "GPW": [
+            Feature(
+                name = "pop_density",
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear")
+            )
+        ],
+        "CENSUSROADS": [
+            Feature(
+                name = "dist_to_road",
+                resampling = Resampling.nearest,
+                time_interp = ("broadcast", "linear"),
+                ds_norms = ["log1p", "z_score"]
+            )
+        ],
+        "LANDFIRE": [
+            Feature(
+                name = "elevation",
+                key = "_Elev",
+                resampling = Resampling.bilinear,
+                clip = (0.0, 5000.0),
+                time_interp = ("broadcast", "linear"),
+                ds_norms = ["z_score"]
+            ),
+            Feature(
+                name = "slope",
+                key = "_SlpD",
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear"),
+                ds_norms = ["z_score"]
+            ),
+            Feature(
+                name = "aspect",
+                key = "_Asp",
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear"),
+            ),
+            Feature(
+                name = "water_mask",
+                key = "_EVC",
+                resampling = Resampling.nearest,
+                time_interp = ("broadcast", "linear")
+            )
+        ],
+        "NLCD": [
+            Feature(
+                name = "lcov_class",
+                key = "LndCov",
+                resampling = Resampling.nearest,
+                time_interp = ("broadcast", "linear"),
+                num_classes = 9,
+                one_hot_encode = True
+            ),
+            Feature(
+                name = "frac_imp_surface",
+                key = "FctImp",
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear"),
+                ds_clip = (0.0, 1.0),
+                ds_norms = ["minmax"]
+            ),
+            Feature(
+                name = "canopy_cover_pct",
+                key = "tccconus",
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear"),
+                ds_clip = (0.0, 1.0),
+                ds_norms = ["minmax"]
+            )
+        ],
         "GRIDMET": [
             Feature(
                 name = "temp_avg",
                 key = "tmm",
-                clip = (0.0, 120), #Far
+                clip = (0.0, 120.0), #Far
                 resampling = Resampling.bilinear,
-                time_interp = ("time", "linear"),
+                time_interp = ("broadcast", "linear"),
                 ds_norms = ["z_score"],
             ),
             Feature(
                 name = "rhumidity_pct",
                 key = "rm",
                 resampling = Resampling.bilinear,
-                time_interp = ("time", "linear"),
+                time_interp = ("broadcast", "linear"),
                 agg_time = 2,
                 ds_norms = ["z_score"],
             ),
             Feature(
                 name = "wind_dir",
                 key = "th",
-                clip = (0, 360),
+                clip = (0.0, 360.0),
                 resampling = Resampling.bilinear,
                 time_interp = ("existing", "quadratic"),
             ),
             Feature(
                 name = "wind_mph",
                 key = "vs",
-                clip = (0, 100),
+                clip = (0.0, 100.0),
                 resampling = Resampling.bilinear,
                 time_interp = ("existing", "quadratic"),
                 ds_norms = ["log1p", "z_score"]
@@ -217,14 +225,7 @@ def base_feat_config():
                 ds_norms = ["log1p", "z_score"]
             ),
         ],
-        "CENSUSROADS": [
-            Feature(
-                name = "dist_to_road",
-                resampling = Resampling.nearest,
-                time_interp = ("time", "linear"),
-                ds_norms = ["log1p", "z_score"]
-            )
-        ],
+        
         "FIRE_USFS": [
             Feature(
                 name = "usfs_burn",
@@ -245,8 +246,7 @@ def base_feat_config():
                 time_interp = ("existing", "zero")
             ),
         ],
-
-        
+        ### --------------------------------------------------------
         "DERIVED": [
             Feature(
                 name = "fire_spatial_roll",

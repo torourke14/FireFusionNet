@@ -1,6 +1,7 @@
 import torch
 import torch.optim as optim
 import torch.nn as nn
+import pandas as pd
 
 from torch.utils.data import DataLoader
 from torch.nn import CrossEntropyLoss
@@ -102,7 +103,6 @@ class WRMTrainer:
 
         total_loss = (ign_loss * alpha_ign) + (cause_loss * alpha_cause)
         return total_loss, ign_loss, cause_loss
-
 
     def train_epoch(self):
         self.model.train()
@@ -271,7 +271,10 @@ class WRMTrainer:
         # Do some plotting and fun visualizations!
         ign_accuracies = self.metrics['ign'].record
         cause_accuracies = self.metrics['ign_cause'].record
-        (fTPR, fTNR, fFPR, fFNR), (rTPR, rTNR, rFPR, rFNR) = self.metrics['ign_matrix'].compute_rates()
+        
+        self.metrics['ign_matrix'].compute_rates().plot()
+
+        
 
 
 if __name__ == "__main__":
@@ -283,7 +286,7 @@ if __name__ == "__main__":
     embed_dim           = 0
     # Windowed Spatial Mixing
     ws_n_heads          = 4
-    ws_window_size      = 8 # num windows to concatenate
+    ws_window_size      = 8     # num windows to concatenate
     # Channel Mixing
     cm_n_heads          = 4
     cm_n_channels       = 64
@@ -299,8 +302,8 @@ if __name__ == "__main__":
 
     """ Training Params """
     batch_size = 6
-    epochs = (4, 100, 20) # warmup, total, early stop patience
-    lrs = (1e-5, 3e-4) # min, base after warmup
+    epochs = (4, 100, 20)       # warmup, total, early stop patience
+    lrs = (1e-5, 3e-4)          # min, base after warmup
     weight_decay = 3e-5
     grad_clip = 1.0
 
@@ -315,6 +318,7 @@ if __name__ == "__main__":
         train_loader = feature_grid.train_loader,
         val_loader = feature_grid.val_loader,
         model_params = {
+            # Encoder
             "in_channels": in_channels, "embed_dim": embed_dim,
             # Windowed Spatial Mixing
             "ws_n_heads": ws_n_heads, "ws_win_size": ws_window_size,

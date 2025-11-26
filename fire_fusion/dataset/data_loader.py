@@ -6,7 +6,7 @@ import xarray as xr
 from pathlib import Path
 from typing import Dict, List, Literal, Sequence, Tuple
 
-from src.fire_fusion.config.feature_config import base_feat_config
+from fire_fusion.config.feature_config import base_feat_config
 
 # elif ntype == "one-hot-encode":
 #     one_hot_year = torch.nn.functional.one_hot(lc, num_classes=num_classes) # (T_year, H, W, C)

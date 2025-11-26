@@ -6,49 +6,51 @@ from fire_fusion.config.feature_config import Feature
 from fire_fusion.config.path_config import NLCD_DIR
 from fire_fusion.config.feature_config import LAND_COVER_RAW_MAP
 from fire_fusion.utils.utils import load_as_xarr
-from processor import Processor
+from .processor import Processor
 
 class NLCD(Processor):
-    def __init__(self, cfg, mgrid, mCRS):
-        super().__init__(cfg, mgrid, mCRS)
+    def __init__(self, cfg, mgrid):
+        super().__init__(cfg, mgrid)
 
-    def build_feature(self, f_config: Feature):
-        feat_by_year: list[xr.DataArray] = []
+    def build_feature(self, f_cfg: Feature):
+        feature_by_year = xr.Dataset()
 
-        files = [f for f in NLCD_DIR.glob("*.tiff") if f_config.key in f.stem] # type: ignore
-
+        files = [f for f in NLCD_DIR.glob("*.tiff") if (f_cfg.key and f_cfg.key in f.stem)]
         if not files:
-            print(f"No .tiff files with {f_config.key}, do you even know how to code bro?")
+            print(f"No .tiff files with {f_cfg.key}, do you even know how to code bro?")
+            return xr.Dataset()
+        
         for fp in sorted(files):
             year = int(fp.stem.split("_")[3])
 
-            with load_as_xarr(fp, name=f_config.name) as raw:
-                arr = self._preclip_native(raw)
-                arr = self._reproject_to_mgrid(arr, f_config.resampling)
+            with load_as_xarr(fp, name=f_cfg.name) as raw:
+                arr = self._preclip_native_arr(raw)
+                arr = self._reproject_arr_to_mgrid(arr, f_cfg.resampling)
                 
-                if f_config.key == "LndCov":
-                    print(f"Computing land cover % purely based on vibes..")
-                    arr = self._build_land_cover(arr, f_config)
-                elif f_config.key == "FctImp":
-                    print(f"Resolving conflict between urban folk and farm folk..")
-                    arr = self._build_frac_imp_surface(arr, f_config)
-                elif f_config.key == "tccconus":
-                    print(f"Swinging from the trees, weeeeeeeeee!!")
-                    arr = self._build_canopy_cover_pct(arr, f_config)
+                if f_cfg.key == "LndCov":
+                    print(f"[NLCD] Computing {year} land cover % purely based on vibes..")
+                    arr = self._build_land_cover(arr, f_cfg)
+                elif f_cfg.key == "FctImp":
+                    print(f"[NLCD] Resolving the great conflict of {year} between urban folk and farm folk..")
+                    arr = self._build_frac_imp_surface(arr, f_cfg)
+                elif f_cfg.key == "tccconus":
+                    print(f"[NLCD] Swinging from the trees like its {year}, weeeeeeeeee!!")
+                    arr = self._build_canopy_cover_pct(arr, f_cfg)
                 else:
-                    print(f"Unknown key {f_config.key}???")
+                    print(f"[NLCD] Unknown key {f_cfg.key}???")
 
-                ts = pd.Timestamp(f"{year}-01-01")
-                arr = arr.expand_dims(time=[ts])
-                feat_by_year.append(arr)
+                if "time" not in arr.dims:
+                    ts = pd.Timestamp(f"{year}-01-01")
+                    arr = arr.expand_dims(time=[ts]).assign_coords(time=[ts])
+                feature_by_year[f_cfg.name] = arr
 
-        feat_data = xr.concat(feat_by_year, dim="time").sortby("time")
-        feat_data = self._time_interpolate(feat_data, f_config.time_interp)
+        feature_by_year = feature_by_year.sortby("time")
+        feature_by_year = self._time_interpolate(feature_by_year, f_cfg.time_interp)
 
-        if "lcov_class" in feat_data.dims:
-            feat_data = feat_data.transpose("time", "lcov_class", "y", "x")
+        if "lcov_class" in feature_by_year.dims:
+            feat_data = feature_by_year.transpose("time", "lcov_class", "y", "x")
         else:
-            feat_data = feat_data.transpose("time", "y", "x")
+            feat_data = feature_by_year.transpose("time", "y", "x")
         return feat_data
     
     

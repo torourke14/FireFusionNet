@@ -6,12 +6,12 @@ from shapely.geometry import box
 from scipy.ndimage import distance_transform_edt
 
 from fire_fusion.config.feature_config import Feature
-from processor import Processor
+from .processor import Processor
 
 
 class CensusRoads(Processor):
-    def __init__(self, cfg, master_grid, mCRS):
-        super().__init__(cfg, master_grid, mCRS)
+    def __init__(self, cfg, master_grid):
+        super().__init__(cfg, master_grid)
     
     def build_feature(self, f_config: Feature):
         # load roads, reproject, clip
@@ -20,13 +20,13 @@ class CensusRoads(Processor):
         print(f"Informing tensors to not be little whiners")
 
         roads = gpd.clip(roads, box(
-            self.gridref.lon_min, self.gridref.lat_min, 
-            self.gridref.lon_max, self.gridref.lat_max
+            self.gridref.attrs['x_min'], self.gridref.attrs['y_min'],
+            self.gridref.attrs['x_max'], self.gridref.attrs['y_max']
         ))
 
         # Rasterize 1 where there is a road
         transformer = self.gridref.rio.transform()
-        mgrid_ht, mgrid_wt = self.gridref.template.shape
+        mgrid_ht, mgrid_wt = self.gridref.attrs['template'].shape
 
         road_raster = features.rasterize(
             ((geom, 1) for geom in roads.geometry),

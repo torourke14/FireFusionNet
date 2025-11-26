@@ -3,7 +3,6 @@ from matplotlib.colors import ListedColormap
 import numpy as np
 import torch
 
-
 def plot_training_loss(train_losses: list[float], save_path: str | None = None):
     """
     Plot training loss vs epoch.
@@ -32,7 +31,7 @@ def to_numpy_grid(x: torch.Tensor | np.ndarray) -> np.ndarray:
     """
     if isinstance(x, torch.Tensor):
         x = x.detach().cpu().numpy()
-    x = np.array(x)  # ensure numpy
+    x = np.array(x)
 
     if x.ndim == 2:
         return x
@@ -105,7 +104,7 @@ def reliability_diagram(
         plt.show()
 
 
-def plot_grid(
+def plot_XY_grid(
     grid_2d: np.ndarray,
     water_mask: torch.Tensor | np.ndarray | None = None,
     title: str = "",
@@ -148,7 +147,7 @@ def plot_grid(
         plt.show()
 
 
-def plot_feature_time_t(
+def plot_feature_time_XY(
     features: torch.Tensor | np.ndarray,
     water_mask: torch.Tensor | np.ndarray | None,
     time_idx: int | None,
@@ -186,17 +185,6 @@ def plot_feature_time_t(
     raise ValueError(f"Unsupported grid shape: {grid.shape}")
 
 
-
-
-
-
-
-    plot_grid(
-        grid_2d,
-        water_mask=water_mask,
-        title=title or f"Feature channel {channel_idx} (t={time_idx})",
-        save_path=save_path
-    )
 
 def plot_model_prob_grid_time_t(
     probs: torch.Tensor,
@@ -276,8 +264,6 @@ def plot_label_grid_time_t(
         plt.close()
     else:
         plt.show()
-
-
 
 
 def plot_probability_surface_3d(
