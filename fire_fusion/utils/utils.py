@@ -1,12 +1,16 @@
+import os
+from pathlib import Path
+import math
+import random
 from typing import Dict, List
+import warnings
+
+import numpy as np
 import torch
 import torch.optim as optim
 import xarray as xr, rioxarray
-import numpy as np
-import os
-import math
-import random
-from pathlib import Path
+import rasterio
+from rasterio.errors import NotGeoreferencedWarning
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -20,32 +24,54 @@ def F_to_K(f):
     return (f + 459.67) * 5/9
 
 
+def read_hdf_file(subdataset: str, var = None):
+    data = rioxarray.open_rasterio(subdataset, variable=var, masked=True)
+
+    if "band" in data.dims and data.sizes.get("band", 1) == 1:  # type: ignore
+        data = data.squeeze("band")  # type: ignore
+    data.name = np.var # type: ignore
+    return data
+
+
 def load_as_xdataset(
     file: Path,
-    grid: str,
     variables: List[str] = [],
 ) -> xr.Dataset:
     suffix = file.suffix.lower()
     try:
-        # LAADS
         if suffix == ".hdf":
-            if grid is None or len(variables) == 0:
-                raise ValueError("For .hdf need missing variable(s) and/or grid id")
-            
-            v_dict: Dict = {}
+            if not variables:
+                raise ValueError("[LOAD_AS_XDATASET] For .hdf need variables list")
+
+            v_dict: Dict[str, xr.DataArray] = {}
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
+                with rasterio.open(file) as src:
+                    sds_list = src.subdatasets
+
+            if not sds_list:
+                raise ValueError(f"[LOAD_AS_XDATASET] No subdatasets for {file.name}. run 'conda install libgdal-hdf4' and try again?")
+
             for var in variables:
-                subdataset = f'HDF4_EOS:EOS_GRID:"{str(file)}":{grid}:{var}'
-                ds = rioxarray.open_rasterio(subdataset, variable=var, masked=True)
+                try:
+                    sub = next(sd for sd in sds_list if sd.endswith(f":{var}"))
+                except StopIteration:
+                    raise ValueError(f"No subdataset ending with ':{var}' in {file.name}. Available:\n{sds_list}")
 
-                if "band" in ds.dims and ds.sizes.get("band", 1) == 1:  # type: ignore
-                    ds = ds.squeeze("band")  # type: ignore
-                
+                da = rioxarray.open_rasterio(sub, masked=True)
+                if "band" in da.dims and da.sizes.get("band", 1) == 1: # type: ignore
+                    da = da.squeeze("band") # type: ignore
                 da.name = var # type: ignore
-                v_dict[var] = ds
+                v_dict[var] = da # type: ignore
 
-        return xr.Dataset(v_dict)
+            return xr.Dataset(v_dict)
+        
+        print("[LOAD_AS_XDATASET] Dont know this file type")
+        return xr.Dataset()
+
     except Exception as e:
-        print(f"[LOAD_AS_DATASET] Failed to load file '{file.stem}': ", e)
+        print(f"[LOAD_AS_XDATASET] Failed to load file '{file.stem}':", e)
         return xr.Dataset()
 
 
@@ -53,10 +79,13 @@ def load_as_xdataset(
 def load_as_xarr(
     file: Path,
     name: str,
-    variable = None, # for Dataset -> DataArray
+    variable = None, # 
     grid = None,
     no_data_val = None,
 ) -> xr.DataArray:
+    """
+    load file with a specific variable. To ensure DataArray return type, must provide variable
+    """
     suffix = file.suffix.lower()
 
     try:
@@ -87,12 +116,14 @@ def load_as_xarr(
             if grid is None or variable is None:
                 raise ValueError("[LOAD_AS_XARR] expects variable and grid for .hdf files")
             
-            subdataset = f'HDF4_EOS:EOS_GRID:"{str(file)}":{grid}:{variable}'
-            darr = rioxarray.open_rasterio(subdataset, variable=variable, masked=True)
+            with rasterio.open(file) as src:
+                sds = src.subdatasets
+                if not sds: raise ValueError("No hdf5 subdatasets")
 
-            if "band" in darr.dims and darr.sizes.get("band", 1) == 1:  # type: ignore
-                darr = darr.squeeze("band")  # type: ignore
-            
+            for sd in sds:
+                if sd.endswith(f":{variable}"):
+                    darr = read_hdf_file(sd, variable)
+
         # None yet?
         elif suffix in {".h5", ".hdf5"}:
             ds = xr.open_dataset(file, 

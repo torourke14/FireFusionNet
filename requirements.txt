@@ -3,8 +3,9 @@ numpy == 2.2.6
 pandas >= 2.3.3
 # Grid rasterizing
 xarray >= 2025.11.0
-rioxarray >= 0.19.0
+    rioxarray >= 0.19.0
 rasterio >= 1.4.3
+    libgdal-hdf4 >= 3.10.3
 geopandas >= 1.1.1
 shapely >= 2.1.2
 scipy >= 1.16.3

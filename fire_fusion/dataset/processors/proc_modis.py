@@ -36,7 +36,7 @@ class Modis(Processor):
         # We only want tiles that overlay the Pacific Northwest, which covers the below h/v indices
         self.tiles = ["h08v04", "h08v05", "h09v04", "h09v05", "h10v04"]
         self.version = "061"
-        self.max_parallel_req = 5
+        self.max_parallel_req = 4
         
     
     def build_feature(self, f_cfg: Feature) -> xr.Dataset:
@@ -65,60 +65,73 @@ class Modis(Processor):
             for req in as_completed(requests):
                 yr = requests[req]
                 try:
-                    year_data = req.result()
-                    feature_by_year = xr.merge([ feature_by_year, year_data ], join="outer")
-                    # feature_by_yr[f_cfg.name] = year_data
+                    yr_ds = req.result()
+                    if yr_ds is None: continue
+                    
+                    # print("INDICES", yr_ds.indexes)
+                    feature_by_yr = xr.merge([ feature_by_yr, yr_ds ], join="outer")
+
                 except Exception as e:
-                    print(f"[LAADS] Satellite broke... heading back to {yr}: {e}")
+                    print(f"[LAADS] Satellite tried to load data for {yr}, epic fail! --> {e}\n\n")
+
         # -----------------------------------------------------------------------
 
-        print("feature building finished")
         feature_by_yr = feature_by_yr.sortby("time")
         feature_by_yr = self._time_interpolate(feature_by_yr, f_cfg.time_interp)
         feature_by_yr = feature_by_yr.transpose("time", "y", "x")
-        feature_by_yr.name = f_cfg.name
         return feature_by_yr
     
+
     def _parse_date(self, filename):
         """ 
         Parse filename to retrieve year and date
         - ex: MOD13Q1.A2000049.h09v05.006.2015136104623.hdf = MOD13Q1, year 2000, day 49, h09/v05, hash
         """
-        year, doy = "", ""
+        year, doy = None, None
         for p in filename.split("."):
             if (p[0] == "A" and p[1:8].isdigit()):
-                year = p[1:5]
-                doy = p[5:8]
+                year = int(p[1:5])
+                doy = int(p[5:8])
                 break
-        if year == "" or doy == "":
+        if year is None or doy is None:
             raise ValueError(f"[MODIS] Couldn't parse filename {filename}")
         return datetime(year, 1, 1) + timedelta(days=doy - 1)
     
 
-    def _fetch_ndvi(self, f_cfg: Feature, year: int) -> xr.Dataset:
+    def _fetch_ndvi(self, f_cfg: Feature, year: int) -> xr.Dataset | None:
         nc_files = self._fetch_year(short_name=f_cfg.key or "", year=year)
+        if len(nc_files) == 0:
+            return None
+        
         year_data: List[xr.DataArray] = []
-
         for fp in nc_files:
-            with load_as_xdataset(
-                file=fp, grid="MODIS_Grid_16DAY_250m_500m_VI",
-                variables=["250m 16 days NDVI", "250m 16 days VI Quality"]
-            ) as raw:
+            ts = pd.Timestamp(self._parse_date(fp.name))
+            print(f"[LAADS] Parsing {fp.stem} --> {ts}")
+
+            with load_as_xdataset(file=fp, variables=["250m 16 days NDVI", "250m 16 days VI Quality"]) as raw:
+                if len(raw.data_vars.items()) == 0:
+                    continue
+
                 arr = self._preclip_native_dataset(raw)
                 arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
                 """ -----------------------------------------------------------------------------------
-                    NOTE: BELOW BIT PARSING DONE SOLELY BY CHATGPT; 
+                    NOTE: CHATGPT helped with bitparsing below
                         THESE WERE REALLY DIFFICULT TO FIGURE OUT!!
                 ----------------------------------------------------------------------------------- """
-                ndvi = arr["250m 16 days NDVI"].astype("float32")
-                qa  = arr["250m 16 days VI Quality"].astype("float16")
-                
-                fill_val = ndvi.attrs.get("_FillValue", -3000)
+                ndvi = arr["250m 16 days NDVI"].astype('float32')
+                qa = arr["250m 16 days VI Quality"].fillna(0).astype("uint16")
+
+                fill_val = ndvi.rio.nodata
+                print("fillval1: ", fill_val)
+                if fill_val is None:
+                    fill_val = ndvi.attrs.get("_FillValue", -3000.0)
+                print("fillval2: ", fill_val)
                 ndvi = ndvi.where(ndvi != fill_val)
 
                 # --- QA decoding ---
                 ndvi_quality = qa & 0b11                  # bits 0-1
+                
                 vi_useful    = (qa >> 2) & 0b1111         # bits 2-5
                 adj_cloud    = (qa >> 8) & 0b1            # bit 8
                 mixed_cloud  = (qa >> 10) & 0b1           # bit 10
@@ -131,29 +144,32 @@ class Modis(Processor):
                 land_mask      = land_water.isin([1, 2])  # land + coastlines
 
                 ndvi = ndvi.where(good_quality & good_useful & no_adj_cloud & no_mixed_cloud & land_mask)
-
-                scale_factor = float(ndvi.attrs.get("scale_factor", 1.0))
-                add_offset   = float(ndvi.attrs.get("add_offset", 0.0))
-                ndvi = scale_factor * (ndvi - add_offset)
                 """ ------------------------------------------------------------------------------- """
 
-            ts = pd.Timestamp(self._parse_date(str(fp.name)))
             ndvi = ndvi.expand_dims(time=[ts])
             year_data.append(ndvi)
 
-        print("fetch ndvi end")
-        return xr.concat(year_data, dim="time").to_dataset(name=f_cfg.name)
+        # stack tiles for each day returned
+        print(f"ndvi finished for {year}")
+        stacked = xr.concat(year_data, dim="time").sortby("time")
+        stacked = stacked.groupby("time").max("time")
+        return stacked.to_dataset(name=f_cfg.name)
         
     
-    def _fetch_lai(self, f_cfg: Feature, year: int) -> xr.Dataset:
+    def _fetch_lai(self, f_cfg: Feature, year: int) -> xr.Dataset | None:
         nc_files = self._fetch_year(f_cfg.key or "", year)
-        year_data: List[xr.DataArray] = []
+        if len(nc_files) == 0:
+            return None
 
+        year_data: List[xr.DataArray] = []
         for fp in nc_files:
-            with load_as_xdataset(
-                file=fp, grid="MOD_Grid_MOD15A2H",
-                variables=["Lai_500m", "FparLai_QC", "FparExtra_QC"]
-            ) as raw:
+            ts = pd.Timestamp(self._parse_date(fp.name))
+            print(f"[LAADS] Parsing {fp.stem} --> {ts}")
+
+            with load_as_xdataset(file=fp, variables=["Lai_500m", "FparLai_QC", "FparExtra_QC"]) as raw:
+                if len(raw.data_vars.items()) == 0:
+                    continue
+                
                 arr = self._preclip_native_dataset(raw)
                 arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
@@ -161,9 +177,9 @@ class Modis(Processor):
                     NOTE: BELOW BIT PARSING DONE SOLELY BY CHATGPT; 
                         THESE WERE REALLY DIFFICULT TO FIGURE OUT!!
                 ----------------------------------------------------------------------------------- """
-                lai  = arr["Lai_500m"].astype("float32")
-                qc   = arr["FparLai_QC"].astype("uint8")
-                qcx  = arr["FparExtra_QC"].astype("uint8")
+                lai  = arr["Lai_500m"].fillna(0).astype("float32")
+                qc   = arr["FparLai_QC"].fillna(0).astype("uint8")
+                qcx  = arr["FparExtra_QC"].fillna(0).astype("uint8")
 
                 # Drop fill + non-terrestrial codes (249–255)
                 lai = lai.where((lai >= 0) & (lai <= 100))
@@ -175,7 +191,6 @@ class Modis(Processor):
                 clouds_ok   = cloudstate.isin([0, 3])        # clear / assumed clear
                 retrieval_ok = scf_qc < 4                    # exclude "not produced"
 
-                # Extra QC (FparExtra_QC)
                 landsea   = qcx & 0b11                       # bits 0–1
                 snow_ice  = (qcx >> 2) & 0b1                 # bit 2
                 int_cloud = (qcx >> 5) & 0b1                 # bit 5
@@ -185,30 +200,31 @@ class Modis(Processor):
                 no_clouds = (int_cloud == 0) & (shadow == 0)
 
                 lai: xr.DataArray = lai.where(modland_good & clouds_ok & retrieval_ok & land_ok & no_snow & no_clouds)
-
-                # Scale factor and offset
-                scale_factor = float(lai.attrs.get("scale_factor", 0.1))
-                add_offset   = float(lai.attrs.get("add_offset", 0.0))
-                lai = scale_factor * (lai - add_offset)
                 """ ------------------------------------------------------------------------------- """
 
-            ts = pd.Timestamp(self._parse_date(str(fp.name)))
             lai = lai.expand_dims(time=[ts])
             year_data.append(lai)
 
-        print("fetch lai  end")
-        return xr.concat(year_data, dim="time").to_dataset(name=f_cfg.name)
+        print(f"fetch lai end for {year}")
+        stacked = xr.concat(year_data, dim="time").sortby("time")
+        stacked = stacked.groupby("time").max("time")
+        return stacked.to_dataset(name=f_cfg.name)
     
 
-    def _fetch_burns(self, f_cfg: Feature, year: int) -> xr.Dataset:
+    def _fetch_burns(self, f_cfg: Feature, year: int) -> xr.Dataset | None:
         nc_files = self._fetch_year(f_cfg.key or "", year)
+        if len(nc_files) == 0:
+            return None
+        
         year_data: List[xr.DataArray] = []
-
         for fp in nc_files:
-            with load_as_xdataset(
-                file=fp, grid="MOD_Grid_Monthly_500m_DB_BA",
-                variables=["Burn Date", "QA"]
-            ) as raw:
+            ts = pd.Timestamp(self._parse_date(str(fp.name)))
+            print(f"[LAADS] Parsing {fp.stem} --> {ts}")
+
+            with load_as_xdataset(file=fp, variables=["Burn Date", "QA"]) as raw:
+                if len(raw.data_vars.items()) == 0:
+                    continue
+
                 arr = self._preclip_native_dataset(raw)
                 arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
@@ -216,8 +232,8 @@ class Modis(Processor):
                     NOTE: BELOW BIT PARSING DONE SOLELY BY CHATGPT; 
                         THESE WERE REALLY DIFFICULT TO FIGURE OUT!!
                 ----------------------------------------------------------------------------------- """
-                burn = raw["Burn Date"].astype("int16")
-                qa   = raw["QA"].astype("uint8")
+                burn = arr["Burn Date"].fillna(-1).astype("int16")
+                qa   = arr["QA"].fillna(0).astype("uint8")
                 
                 burn = burn.where(burn >= 0)      # drop -1, -2
                 is_land  = (qa & 0b1) == 1        # bit 0
@@ -227,12 +243,13 @@ class Modis(Processor):
                 burn_mask = (burn > 0).astype("float32")
                 """ ------------------------------------------------------------------------------- """
 
-            ts = pd.Timestamp(self._parse_date(str(fp.name)))
             burn_mask = burn_mask.expand_dims(time=[ts])
             year_data.append(burn_mask)
 
-        print("fetch burn end")
-        return xr.concat(year_data, dim="time").to_dataset(name=f_cfg.name)
+        print(f"fetch burn end for {year}")
+        stacked = xr.concat(year_data, dim="time").sortby("time")
+        stacked = stacked.groupby("time").max("time")
+        return stacked.to_dataset(name=f_cfg.name)
 
 
     # ----------------------------------------------------------------------
@@ -246,7 +263,10 @@ class Modis(Processor):
             for u in g["umm"].get("RelatedUrls", []):
                 t = u.get("Type","")
                 url = str(u.get("URL",""))
-                if t == "GET DATA" and url.startswith("https") and url.lower().endswith(".hdf"):
+                if (url not in seen and
+                    t == "GET DATA" and 
+                    url.startswith("https") and url.lower().endswith(".hdf")
+                ):
                     seen.add(url)
                     links.append(url)
         return links
@@ -255,14 +275,16 @@ class Modis(Processor):
         return f"{short_name}.*.{tile}.*"
 
     def _fetch_year(self, short_name: str, year: int) -> List[Path]:
-        """ fetch data for a given product and year, return Path to existing/fetched .nc file"""
+        """ fetch data for a given product and year, return Path to existing/fetched .nc file """
+
         if not short_name or not year:
             return []
 
         product_folder = MODIS_DIR / f"{short_name}.{year}"
         ex_files = list(product_folder.glob("*.hdf"))
+
         if ex_files and all([f.name.startswith(f"{short_name}.A{year}") for f in ex_files]):
-            print(f"[LAADS] NASA Found my yearbook from {year}, DAMN I look good..")
+            print(f"[LAADS] {short_name} Found my yearbook from {year}, DAMN I look good..")
             return ex_files
         
         comb_results = []
@@ -278,10 +300,11 @@ class Modis(Processor):
                 downloadable=True, 
                 count=-1,
             )
-            if len(granules) > 0: comb_results.extend(granules)
+            if len(granules) > 0:
+                comb_results.extend(granules)
         
         if not comb_results:
-            print(f"[LAADS] Told my satellite that {short_name} was cooler, they werent happy..")
+            print(f"[LAADS] {short_name}: 'We aint found %$#@ for {year}'")
             return list()
         
         unq_links = self._get_hdf_links(comb_results)

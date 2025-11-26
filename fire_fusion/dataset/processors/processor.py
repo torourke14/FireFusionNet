@@ -32,7 +32,6 @@ class Processor:
         maxx, maxy = self.gridref.attrs['x_max'], self.gridref.attrs['y_max']
         
         if obj.rio.crs != self.gridref.rio.crs:
-            print("[Processor] Warping source CRS coord's to main grid..")
             transformation = Transformer.from_crs(
                 crs_from = self.gridref.rio.crs, 
                 crs_to   = obj.rio.crs,
@@ -48,10 +47,8 @@ class Processor:
             miny, maxy = min(y), max(y)
 
         if obj.rio.crs.is_geographic:
-            print("[Processor] clipping source's grid using degrees..")
             mx = my = deg_m
         else:
-            print("[Processor] clipping source's grid using meters..")
             tfm = obj.rio.transform()
             px_size_x = abs(tfm.a)
             px_size_y = abs(tfm.e)
@@ -70,9 +67,9 @@ class Processor:
         clipped_vars = {}
         for name, da in obj.data_vars.items():
             clipped_vars[name] = self._preclip_grid_fn(da)
-        
         ds = xr.Dataset(clipped_vars)
-        ds = ds.assign_coords(obj.coords)
+        # sample = next(iter(ds.data_vars.values()))
+        ds = ds.assign_coords(ds.coords)
         ds.attrs = obj.attrs
         return ds
 
@@ -91,10 +88,10 @@ class Processor:
         clipped_vars = {}
         for name, da in obj.data_vars.items():
             clipped_vars[name] = self._reproject_to_mgrid_fn(da, resample_type)
-        
         ds = xr.Dataset(clipped_vars)
-        ds = ds.assign_coords(obj.coords)
-        ds.attrs = obj.a
+        # sample = next(iter(ds.data_vars.values()))
+        ds = ds.assign_coords(ds.coords)
+        ds.attrs = obj.attrs
         return ds
             
 
