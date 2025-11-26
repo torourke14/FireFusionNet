@@ -26,24 +26,29 @@ def load_as_xdataset(
     variables: List[str] = [],
 ) -> xr.Dataset:
     suffix = file.suffix.lower()
-
-    # LAADS
-    if suffix == ".hdf":
-        if grid is None or len(variables) == 0:
-            raise ValueError("For .hdf need missing variable(s) and/or grid id")
-        
-        v_dict: Dict = {}
-        for var in variables:
-            subdataset = f'HDF4_EOS:EOS_GRID:"{str(file)}":{grid}:{var}'
-            ds = rioxarray.open_rasterio(subdataset, variable=var, masked=True)
-
-            if "band" in ds.dims and ds.sizes.get("band", 1) == 1:  # type: ignore
-                ds = ds.squeeze("band")  # type: ignore
+    try:
+        # LAADS
+        if suffix == ".hdf":
+            if grid is None or len(variables) == 0:
+                raise ValueError("For .hdf need missing variable(s) and/or grid id")
             
-            da.name = var # type: ignore
-            v_dict[var] = ds
+            v_dict: Dict = {}
+            for var in variables:
+                subdataset = f'HDF4_EOS:EOS_GRID:"{str(file)}":{grid}:{var}'
+                ds = rioxarray.open_rasterio(subdataset, variable=var, masked=True)
 
-    return xr.Dataset(v_dict)
+                if "band" in ds.dims and ds.sizes.get("band", 1) == 1:  # type: ignore
+                    ds = ds.squeeze("band")  # type: ignore
+                
+                da.name = var # type: ignore
+                v_dict[var] = ds
+
+        return xr.Dataset(v_dict)
+    except Exception as e:
+        print(f"[LOAD_AS_DATASET] Failed to load file '{file.stem}': ", e)
+        return xr.Dataset()
+
+
 
 def load_as_xarr(
     file: Path,
@@ -64,7 +69,14 @@ def load_as_xarr(
 
         # gridMET, ESA_CCI, 
         elif suffix == ".nc":
-            ds = xr.open_dataset(file, engine="netcdf4")
+            if variable is None:
+                raise ValueError("[LOAD_AS_XARR] expects variable for .nc files")
+
+            ds = xr.open_dataset(file, 
+                engine="netcdf4", 
+                decode_coords="all",
+                decode_times=True
+            )
             if variable not in ds:
                 raise KeyError(f"{variable} not in dataset. Available: {list(ds.data_vars.keys())}")
             darr = ds[variable]
@@ -73,7 +85,7 @@ def load_as_xarr(
         # LAADS
         elif suffix == ".hdf":
             if grid is None or variable is None:
-                raise ValueError("For .hdf need missing variable(s) and/or grid id")
+                raise ValueError("[LOAD_AS_XARR] expects variable and grid for .hdf files")
             
             subdataset = f'HDF4_EOS:EOS_GRID:"{str(file)}":{grid}:{variable}'
             darr = rioxarray.open_rasterio(subdataset, variable=variable, masked=True)
@@ -83,10 +95,14 @@ def load_as_xarr(
             
         # None yet?
         elif suffix in {".h5", ".hdf5"}:
-            ds = xr.open_dataset(file, engine="h5netcdf", decode_coords="all")
+            ds = xr.open_dataset(file, 
+                engine="h5netcdf", 
+                decode_coords="all", 
+                decode_times=True
+            )
 
             if variable is None:
-                raise ValueError("For .hdf need to select a variable to convert to dataset")
+                raise ValueError("[LOAD_AS_XARR] expects variable for .h5/.hdf files")
             if variable == "all":
                 return ds[:, :] # return
             if variable not in ds:
@@ -106,9 +122,11 @@ def load_as_xarr(
         return xr.DataArray()
     
 
+
 def estimate_model_size_mb(model: torch.nn.Module) -> float:
     """ Naive way to estimate model size """
     return sum(p.numel() for p in model.parameters()) * 4 / 1024 / 1024
+
 
 
 def set_global_seed(seed: int):
@@ -120,6 +138,7 @@ def set_global_seed(seed: int):
     torch.backends.cudnn.benchmark = False
 
 
+
 def get_device_config(utilization: float = 0.75):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     cpus = os.cpu_count() or 1
@@ -128,6 +147,8 @@ def get_device_config(utilization: float = 0.75):
         print(f"Device: {device}, {torch.cuda.get_device_name(0)}")
     print(f"Using {workers}/{utilization} CPUs")
     return device, workers
+
+
 
 def save_model(model: torch.nn.Module) -> str:
     """ Use this function to save your model in train.py """
