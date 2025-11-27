@@ -20,8 +20,6 @@ class GridMet(Processor):
         return yr_groups
     
     def build_feature(self, f_cfg: Feature):
-        
-
         feature_by_yrs = xr.Dataset()
 
         def _add_yr_data(data: xr.DataArray | xr.Dataset):

@@ -9,8 +9,7 @@ from .path_config import CROADS_DIR, USFS_DIR, GPW_DIR, GRIDMET_DIR, LANDFIRE_DI
 CAUSAL_CLASSES = [
     "NATURAL_LIGHTNING",
     "HUMAN",
-    "INDUSTRIAL",
-    "UNKNOWN"
+    "INDUSTRIAL"
 ]
 
 CAUSE_RAW_MAP = {
@@ -86,50 +85,6 @@ class Feature:
 def base_feat_config():
     return {
         ### --- Processors -----------------------------------------
-        "MODIS": [
-            Feature(
-                name = "modis_ndvi",
-                key = "MOD13Q1",
-                req_param = "250m 16 days NDVI",
-                resampling = Resampling.bilinear,
-                time_interp = ("existing", "nearest"),
-                ds_clip=(-0.1, 1.0),
-                ds_norms = ["minmax"]
-            ),
-            Feature(
-                name = "modis_lai_canopy",
-                key = "MCD15A2H",
-                req_param = "Lai_500m",
-                resampling = Resampling.bilinear,
-                time_interp = ("existing", "nearest"),
-                agg_time = 60,
-                agg_center = True,
-                ds_clip=(0.0, 10.0),
-                ds_norms = ["z_score"],
-            ),
-            Feature(
-                name = "modis_burn",
-                key = "MCD64A1",
-                req_param = "Burn Date",
-                drop = True,
-                time_interp = ("existing", "nearest"),
-            ),
-        ],
-        "GPW": [
-            Feature(
-                name = "pop_density",
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear")
-            )
-        ],
-        "CENSUSROADS": [
-            Feature(
-                name = "dist_to_road",
-                resampling = Resampling.nearest,
-                time_interp = ("broadcast", "linear"),
-                ds_norms = ["log1p", "z_score"]
-            )
-        ],
         "LANDFIRE": [
             Feature(
                 name = "elevation",
@@ -225,7 +180,50 @@ def base_feat_config():
                 ds_norms = ["log1p", "z_score"]
             ),
         ],
-        
+        "MODIS": [
+            Feature(
+                name = "modis_burn",
+                key = "MCD64A1",
+                req_param = "Burn Date",
+                drop = True,
+                time_interp = ("existing", "nearest"),
+            ),
+            Feature(
+                name = "modis_lai_canopy",
+                key = "MCD15A2H",
+                req_param = "Lai_500m",
+                resampling = Resampling.bilinear,
+                time_interp = ("existing", "nearest"),
+                agg_time = 60,
+                agg_center = True,
+                ds_clip=(0.0, 10.0),
+                ds_norms = ["z_score"],
+            ),
+            Feature(
+                name = "modis_ndvi",
+                key = "MOD13Q1",
+                req_param = "250m 16 days NDVI",
+                resampling = Resampling.bilinear,
+                time_interp = ("existing", "nearest"),
+                ds_clip=(-0.1, 1.0),
+                ds_norms = ["minmax"]
+            ),
+        ],
+        "GPW": [
+            Feature(
+                name = "pop_density",
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear")
+            )
+        ],
+        "CENSUSROADS": [
+            Feature(
+                name = "dist_to_road",
+                resampling = Resampling.nearest,
+                time_interp = ("broadcast", "linear"),
+                ds_norms = ["log1p", "z_score"]
+            )
+        ],
         "FIRE_USFS": [
             Feature(
                 name = "usfs_burn",
@@ -234,17 +232,17 @@ def base_feat_config():
                 time_interp = ("existing", "zero")
             ),
             Feature(
-                name = "usfs_perimeter",
-                key = "Fire_Perimeter",
-                drop = True,
-                time_interp = ("existing", "zero")
-            ),
-            Feature(
                 name = "usfs_burn_cause",
                 drop = True,
                 key = "Fire_Cause",
                 time_interp = ("existing", "zero")
             ),
+            Feature(
+                name = "usfs_perimeter",
+                key = "Fire_Perimeter",
+                drop = True,
+                time_interp = ("existing", "zero")
+            )  
         ],
         ### --------------------------------------------------------
         "DERIVED": [
@@ -291,6 +289,7 @@ def base_feat_config():
         ],
         "MASKS": [
             Feature(name="act_fire_mask", is_mask=True),
+            Feature(name="valid_cause_mask", is_mask=True),
             Feature(name="water_mask", is_mask=True)
         ]
     }

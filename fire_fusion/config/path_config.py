@@ -9,7 +9,7 @@ TRAIN_DATA_DIR = DATA_ROOT / "train"
 EVAL_DATA_DIR = DATA_ROOT / "eval"
 TEST_DATA_DIR = DATA_ROOT / "test"
 
-# data\raw\landfire\downloaded
+ARTIFACTS_DIR = PROJECT_ROOT / "fire_fusion" / "artifacts"
 
 LANDFIRE_DIR    = RAW_DATA_DIR / "landfire" / "downloaded"
 NLCD_DIR        = RAW_DATA_DIR / "nlcd" / "downloaded"
@@ -18,5 +18,6 @@ CROADS_DIR      = RAW_DATA_DIR / "census_roads" / "downloaded"
 USFS_DIR        = RAW_DATA_DIR / "fire_usfs" / "downloaded"
 GRIDMET_DIR     = RAW_DATA_DIR / "gridmet" / "downloaded"
 MODIS_DIR       = RAW_DATA_DIR / "modis" / "fetched"
+CDS_DIR         = RAW_DATA_DIR / "cds" / "fetched"
 
 

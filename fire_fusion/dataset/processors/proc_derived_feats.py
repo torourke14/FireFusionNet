@@ -18,7 +18,7 @@ class DerivedProcessor:
 
         
     def derive_features(self, ds: xr.Dataset, 
-        fire_perim_threshold = 0.2, sp_burn_kernel = 3, sp_burn_window = 3
+        sp_burn_kernel = 3, sp_burn_window = 3
     ) -> Tuple[xr.Dataset, xr.DataArray, xr.DataArray]:
         """
             label: fire_new_tplus1 : burning at t+1 AND not burning at t
@@ -27,12 +27,12 @@ class DerivedProcessor:
         """
         modis = (ds["modis_burn"].fillna(0) > 0)
         usfs_o = (ds["usfs_burn"].fillna(0) > 0)
-        usfs_p = (ds["usfs_perimeter"].fillna(0) >= fire_perim_threshold)
+        usfs_p = (ds["usfs_perimeter"].fillna(0) >= 0)
         # INTERMEDIATE VARIABLES ONLY
         burning_t = (modis | usfs_o | usfs_p)
         burning_tp1 = burning_t.shift(time=-1, fill_value=0)
         
-        # --- labels --------------------------------------------------
+        # --- FIRE T + 1 LABEL --------------------------------------------------
         ignition_next = xr.DataArray(
             ((burning_t == 0) & (burning_tp1 == 1)).astype("uint8"),
             dims=burning_t.dims,
@@ -40,7 +40,10 @@ class DerivedProcessor:
             name=self.drv_features[0].name
         )
 
-        # cause tied to next ignition
+        # -- MASK -- only compute loss (1) if not burning at next timestep on cells not burning at t+1
+        burn_loss_mask = (burning_t == 0).astype("uint8")
+
+        # --- FIRE CAUSE LABEL ----------------------------------------------------
         cause_id = xr.full_like(ds['usfs_burn_cause'], fill_value=-1, dtype="int16")
         for idx, klass in enumerate(CAUSAL_CLASSES):
             for token in CAUSE_RAW_MAP[klass]:
@@ -48,16 +51,19 @@ class DerivedProcessor:
         # saimilarly shift forward one time step
         # trainer must ignore -1, never feed it to cross_entropy w/o masking
         cause_id_tp1 = cause_id.shift(time=-1, fill_value=-1)
+
+
         ignition_next_cause = xr.where(ignition_next == 1, cause_id_tp1, -1)
 
-        # --- Masks ---------------------------------------------------
-        # only compute loss (1) if not burning at next timestep on cells not burning at t+1
-        burn_loss_mask = (burning_t == 0).astype("uint8")
+        # -- MASK -- Disclude causes which are unknown/nan from the mask
+        valid_cause_mask = (cause_id_tp1 >= 0).astype("uint8")
+        
 
         ds = ds.assign(**{
             self.labels[0].name: ignition_next,         # ign_next
             self.labels[1].name: ignition_next_cause,   # ign_next_cause
-            self.masks[0].name: burn_loss_mask          # act_fire_mask
+            self.masks[0].name: burn_loss_mask ,        # act_fire_mask
+            self.masks[1].name: valid_cause_mask        # v_cause_mask
             # water mask already added in feature extraction
         })
         

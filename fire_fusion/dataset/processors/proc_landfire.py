@@ -26,7 +26,6 @@ class Landfire(Processor):
                 print(f"[LF] No .tif file exists in {folder.name}")
                 continue
 
-            print(f"[LF] reading {file.parts[-1]}..")
             with load_as_xarr(file, name=f_cfg.name) as raw:
                 arr = self._preclip_native_arr(raw)
                 arr = self._reproject_arr_to_mgrid(arr, f_cfg.resampling)

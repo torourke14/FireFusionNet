@@ -73,7 +73,7 @@ def create_coordinate_grid(
         }
     )
 
-    grid.attrs['template'] = grid.isel(time=0),
+    grid.attrs['template'] = grid.isel(time=0)
 
     # attach CRS and transform for rioxarray
     grid = grid.rio.write_crs(crs_obj)

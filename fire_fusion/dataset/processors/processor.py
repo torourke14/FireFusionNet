@@ -111,9 +111,6 @@ class Processor:
         time_index = self.gridref.attrs['time_index']
         interp_type, interp_method = interpol
 
-        print(f"Interpolating over interpolated interpolations...")
-        # print(f"method: {interp_type} -- dim sizes: ", source_ds.sizes)
-
         # Static or single-slice features -> broadcast over master time
         if interp_type == "broadcast":
             if "time" not in source_ds.dims:

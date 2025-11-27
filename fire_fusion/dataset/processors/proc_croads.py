@@ -1,11 +1,13 @@
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import xarray as xr, rioxarray
 from rasterio import features
 from shapely.geometry import box
 from scipy.ndimage import distance_transform_edt
 
 from fire_fusion.config.feature_config import Feature
+from fire_fusion.config.path_config import CROADS_DIR
 from .processor import Processor
 
 
@@ -15,7 +17,16 @@ class CensusRoads(Processor):
     
     def build_feature(self, f_config: Feature):
         # load roads, reproject, clip
-        roads = gpd.read_file("tl_2012_Washington_prisecroads.shp").to_crs(self.mCRS)
+        road_paths = [
+            CROADS_DIR / "tl_2012_Washington_prisecroads.shp",
+            CROADS_DIR / "tl_2012_Idaho_prisecroads.shp",
+            CROADS_DIR / "tl_2012_Oregon_prisecroads.shp"
+        ]
+
+        roads = gpd.GeoDataFrame(
+            pd.concat([gpd.read_file(p) for p in road_paths], ignore_index=True),
+            crs = gpd.read_file(road_paths[0]).crs
+        )
         
         print(f"Informing tensors to not be little whiners")
 
