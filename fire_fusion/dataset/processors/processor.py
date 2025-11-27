@@ -26,7 +26,16 @@ class Processor:
     def _preclip_grid_fn(self, obj: xr.DataArray, px_m = 3, deg_m = 0.05) -> xr.DataArray:
         """ Don't call me. Call _preclip_native_arr OR _preclip_native_dataset """
         if not hasattr(obj, "rio") or obj.rio.crs is None:
-            return obj
+            if obj.attrs['coordinate_system'] is not None:
+                other_sys = obj.attrs['coordinate_system']
+                epsg = None
+                if "EPSG:" in other_sys:
+                    epsg = other_sys.split("EPSG:")[-1].split(",")[0].strip()
+                elif "4326" in other_sys:
+                    epsg = "4326"
+                if epsg is None:
+                    raise ValueError("no crs")
+                obj = obj.rio.write_crs(f"EPSG:{epsg}")
             
         minx, miny = self.gridref.attrs['x_min'], self.gridref.attrs['y_min']
         maxx, maxy = self.gridref.attrs['x_max'], self.gridref.attrs['y_max']
@@ -55,15 +64,20 @@ class Processor:
             px_size = (px_size_x + px_size_y) / 2.0
             mx = my = px_size * px_m
 
-        return obj.rio.clip_box(
+        obj = obj.rio.clip_box(
             minx=minx-mx, maxx=maxx+mx,
             miny=miny-my, maxy=maxy+my
         )
+        obj = obj.rio.write_crs(self.gridref.rio.crs)
+        obj = obj.rio.write_transform(self.gridref.rio.transform())
+        return obj
     
 
     def _preclip_native_arr(self, obj: xr.DataArray) -> xr.DataArray:
+        # print("preclipping native array")
         return self._preclip_grid_fn(obj)
     def _preclip_native_dataset(self, obj: xr.Dataset) -> xr.Dataset:
+        # print("preclipping native dataset")
         clipped_vars = {}
         for name, da in obj.data_vars.items():
             clipped_vars[name] = self._preclip_grid_fn(da)
@@ -77,9 +91,12 @@ class Processor:
     def _reproject_to_mgrid_fn(self, obj: xr.DataArray, resample_type) -> xr.DataArray:
         """ Don't call me. Call _reproject_arr_to_mgrid OR _reproject_dataset_to_mgrid """
         if not resample_type:
-            return obj.rio.reproject_match(self.gridref)
+            obj = obj.rio.reproject_match(self.gridref)
         else:
-            return obj.rio.reproject_match(self.gridref, resampling=resample_type)
+           obj = obj.rio.reproject_match(self.gridref, resampling=resample_type)
+
+        obj = obj.rio.write_crs(self.gridref.rio.crs)
+        return obj
 
 
     def _reproject_arr_to_mgrid(self, obj: xr.DataArray, resample_type) -> xr.DataArray:
