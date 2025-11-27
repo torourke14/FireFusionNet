@@ -106,96 +106,101 @@ class FeatureGrid:
     
     def _mask_nan(self):
         data = self.master_ds.to_array("channel")
+        nan_mask = xr.apply_ufunc(np.isfinite, data).all(dim="channel")
         
-        is_finite_1 = xr.apply_ufunc(np.isfinite, data)
-        
-        self.master_ds["nan_mask"] = is_finite_1.all(dim="channel")
+        self.master_ds["nan_mask"] = nan_mask
 
         for var in self.master_ds.data_vars:
+            if var in self.label_names or var in self.mask_names or var == "nan_mask":
+                continue
+            
             da = self.master_ds[var]
             if np.issubdtype(da.dtype, np.floating):
-                self.master_ds[var] = da.fillna(0.0)
+                self.master_ds[var] = da.where(nan_mask == 1, 0.0).fillna(0.0)
 
         return self.master_ds
     
-    def _normalize(self, feature: xr.DataArray, name: str) -> xr.DataArray:
-        f_config = self.all_features_dict.get(name)
-        clip = getattr(f_config, "ds_clip", None)
-        norms = getattr(f_config, "ds_norms", None)
+    def _normalize(self):
+        for f in self.master_ds.data_vars:
+            if f in self.mask_names or f in self.label_names:
+                continue
 
-        ff = feature.where(np.isfinite(feature))
-        f_mean = float(ff.mean(dim=ff.dims, skipna=True))
-        f_std = float(ff.std(dim=ff.dims, skipna=True))
-        f_min = float(ff.min(dim=ff.dims, skipna=True))
-        f_max = float(ff.max(dim=ff.dims, skipna=True))
+            feature = self.master_ds[f]
+            f_config = self.all_features_dict.get(str(f))
 
-        if not norms:
-            return feature
-        
-        for ntype in norms:
+            if f_config is None:
+                print(f"can't find feature")
+                continue
+            print(f"[FeatureGrid] normalizing {f_config.name}")
+
+            clip = getattr(f_config, "ds_clip", None)
+            norms = getattr(f_config, "ds_norms", [])
+
+            ff = feature.where(np.isfinite(feature))
+            f_mean = float(ff.mean(dim=ff.dims, skipna=True))
+            f_std = float(ff.std(dim=ff.dims, skipna=True))
+            f_min = float(ff.min(dim=ff.dims, skipna=True))
+            f_max = float(ff.max(dim=ff.dims, skipna=True))
+
             if clip:
                 feature = feature.clip(clip[0], clip[1])
-            if ntype == "z_score":
-                feature = feature.apply_ufunc
-                feature = (feature - f_mean) / f_std
-            elif ntype == "minmax":
-                denom = xr.apply_ufunc(np.abs, f_max - f_min)
-                feature = (feature - f_min) / (denom if denom != 0 else 1.0)
-            elif ntype == "log1p":
-                feature = xr.apply_ufunc(np.log1p, feature)
-            elif ntype == "to_sin":
-                feature = xr.apply_ufunc(np.sin, feature)
-            elif ntype == "scale_max":
-                feature = (feature / f_max)
+            for ntype in norms:
+                if ntype == "z_score":
+                    feature = (feature - f_mean) / (f_std if f_std > 0 else 1.0)
+                elif ntype == "minmax":
+                    denom = abs(f_max - f_min)
+                    feature = (feature - f_min) / (denom if denom > 0.0 else 1.0)
+                elif ntype == "log1p":
+                    feature = xr.apply_ufunc(np.log1p, feature)
+                elif ntype == "to_sin":
+                    feature = xr.apply_ufunc(np.sin, feature)
+                elif ntype == "scale_max":
+                    feature = feature / (f_max if f_max != 0 else 1.0)
 
-        return feature
+            self.master_ds[f] = feature
 
-    def _create_splits(self, ds, train_yrs, eval_yrs, test_yrs):
-        (train_start, train_end) = train_yrs
-        (val_start,  val_end)  = eval_yrs
-        (test_start,  test_end)  = test_yrs
-
-        def slice_years(ds: xr.Dataset, start_yr, end_yr: int) -> xr.Dataset:
-            start_str = f"{start_yr}-01-01"
-            end_str   = f"{end_yr}-12-31"
-            return ds.sel(time=slice(start_str, end_str))
-
-        splits = {}
-        splits["train"] = slice_years(ds, train_start, train_end)
-        splits["eval"] = slice_years(ds, val_start, val_end)
-        splits["test"] = slice_years(ds, test_start, test_end)
-        return splits
     
-    def _save_splits_zarr(self, dataset: xr.Dataset):
-        splits = self._create_splits(dataset, (2000, 2014), (2015, 2017), (2018, 2020))
-        
+    
+    def _save_splits_zarr(self, split=(0.6, 0.2, 0.2)):
+        print("Spraying neutrino stabilization goo in sub-basement level 7...")
+
+        assert (sum(split) - 1.0) < 1e-6, f"splits must equal 1.0"
+
+        times = self.master_ds.time.values
+        n = len(times)
+
+        n_train = int(n * split[0])
+        n_eval  = int(n * split[1])
+
+        train_times = times[:n_train]
+        eval_times  = times[n_train : n_train+n_eval]
+        test_times  = times[n_train+n_eval:]
+
+        print("Detaching sub-basement level 7 from core modules")
+
         compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
         encoding = { var: { "compressor": compressor } for var in self.master_ds.data_vars }
 
-        print("Stabilizing neutrino turbulence in sub-basement level 7...")
-        print("Detaching sub-basement level 7 from core modules")
-
-        excluded = set(self.label_names) | set(self.mask_names)
-        self.feature_vars = [v for v in self.master_ds.data_vars if v not in excluded]
-
-        splits["train"].to_zarr(
+        self.master_ds.sel(time=train_times).to_zarr(
             os.path.join(TRAIN_DATA_DIR, f"train.zarr"),
             mode="w",
             encoding=encoding
         )
-        splits["eval"].to_zarr(
+        self.master_ds.sel(time=eval_times).to_zarr(
             os.path.join(EVAL_DATA_DIR, f"eval.zarr"),
             mode="w",
             encoding=encoding
         )
-        splits["test"].to_zarr(
+        self.master_ds.sel(time=test_times).to_zarr(
             os.path.join(TEST_DATA_DIR, f"test.zarr"),
             mode="w",
             encoding=encoding
         )
 
+        
+
     def build_features(self):
-        print("Warming up GPU cores using low-emission wildfire simulations...")
+        print("Warming up GPU using low-emission wildfire simulations...")
         for src, processor in self.processors.items():
             features: list[Feature] = processor.cfg
 
@@ -203,21 +208,28 @@ class FeatureGrid:
             for config in features:
                 try:
                     layer = processor.build_feature(config)
+                except Exception as e:
+                    print(f"Oh no! {src} processor failed: {e}")
+                    return
+                try:
                     self.master_ds = xr.merge([self.master_ds, layer], join="outer")
                 except Exception as e:
-                    print(f"Oh no! {src} processor failed with: {e}")
+                    print(f"Oh no! {src} merging features failed: {e}")
                     return
                     
         # --- ADD DERIVED FEATURES AND LABELS
-        print(f"Deriving anti-arson techniques through feature derivation..")
+        print(f"[FeatureGrid] Finished extracting features! ")
+        
         drv_processor = DerivedProcessor(
             self.fconfig["DERIVED"], self.fconfig["LABELS"], self.fconfig["MASKS"],
             self.grid
         )
 
+        print(f"[FeatureGrid] Deriving anti-arson techniques through feature derivation..")
         self.master_ds, _, _ = drv_processor.derive_features(self.master_ds)
 
-        # # # drop derivative features (not needed anymore)
+        # drop derivative features (not needed anymore)
+        print(f"[FeatureGrid] Reversing polarity of the of the anti-polarity reverser...")
         drop_names = [cfg.name for cfg in self.base_features_dict.values() if cfg.drop == True]
         self.master_ds = self.master_ds.drop_vars(drop_names)
 
@@ -229,19 +241,15 @@ class FeatureGrid:
                             y=slice(self.grid.attrs['y_min'], self.grid.attrs['y_max']))
                 self.master_ds[var] = da
 
-        print(f"Baking some cookies...")
-        print(f"Baking some muffins...")
+        print(f"[FeatureGrid] Baking some cookies...")
+        print(f"[FeatureGrid] Baking some muffins...")
 
-        # # fill nans
         self.master_ds = self._mask_nan()
+        self._normalize()
+        self._save_splits_zarr()
 
-        # # normalize features
-        for f in self.master_ds.data_vars:
-            if f in self.mask_names or f in self.label_names:
-                continue
-            self.master_ds[f] = self._normalize(self.master_ds[f], name=str(f))
+        print(f"Saved splits to .zarrs.")
 
-        self._save_splits_zarr(self.master_ds)
 
     def load_features(self, batch_size, device, num_workers, pin_memory):
         train_ds = xr.open_zarr(TRAIN_DATA_DIR / f"train.zarr")
@@ -250,18 +258,18 @@ class FeatureGrid:
         ign  = train_ds[self.label_names[0]]
         fire_mask = train_ds[self.mask_names[0]]
         water_mask = train_ds[self.mask_names[1]]
-        full_mask = (water_mask == 1) & (fire_mask == 1)
 
-        ign_valid = ign.where(full_mask)
-
+        ign_valid = ign.where((water_mask == 1) & (fire_mask == 1))
         n_ign_pos = (ign_valid == 1).sum().item()
         n_ign_neg = (ign_valid == 0).sum().item()
 
+        # save, picked up in train.py when FeatureGrid generated
         self.ign_pos_weight = n_ign_neg / float(n_ign_pos)
         print(
             f"[FeatureGrid] pos ignition weights:",
             f"- positives = {n_ign_pos:,}, negatives={n_ign_neg:,}"
-            f"- pos_weight={self.ign_pos_weight:.2f}")
+            f"- pos_weight={self.ign_pos_weight:.2f}"
+        )
 
         self.train_loader = DataLoader(
             dataset = FireDataset(
@@ -285,17 +293,17 @@ class FeatureGrid:
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        # self.test_loader = DataLoader(
-        #     dataset = FireDataset(
-        #         data = xr.open_zarr(TEST_DATA_DIR / f"test.zarr"),
-        #         device = device,
-        #         batch_size = batch_size,
-        #         shuffle = False
-        #     ),
-        #     batch_size=None,
-        #     num_workers=num_workers,
-        #     pin_memory=pin_memory,
-        # )
+        self.test_loader = DataLoader(
+            dataset = FireDataset(
+                data = xr.open_zarr(TEST_DATA_DIR / f"test.zarr"),
+                device = device,
+                batch_size = batch_size,
+                shuffle = False
+            ),
+            batch_size=None,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
         return
 
 # -----------------------------------------------------------------------------------

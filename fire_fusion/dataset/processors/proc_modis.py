@@ -66,9 +66,9 @@ class Modis(Processor):
                 yr = requests[req]
                 try:
                     yr_ds = req.result()
-                    if yr_ds is None: continue
+                    if yr_ds is None:
+                        continue
                     
-                    # print("INDICES", yr_ds.indexes)
                     feature_by_yr = xr.merge([ feature_by_yr, yr_ds ], join="outer")
 
                 except Exception as e:
@@ -78,7 +78,7 @@ class Modis(Processor):
 
         feature_by_yr = feature_by_yr.sortby("time")
         feature_by_yr = self._time_interpolate(feature_by_yr, f_cfg.time_interp)
-        feature_by_yr = feature_by_yr.transpose("time", "y", "x")
+        feature_by_yr = feature_by_yr.transpose("time", "y", "x", ...)
         return feature_by_yr
     
 
@@ -123,10 +123,8 @@ class Modis(Processor):
                 qa = arr["250m 16 days VI Quality"].fillna(0).astype("uint16")
 
                 fill_val = ndvi.rio.nodata
-                print("fillval1: ", fill_val)
                 if fill_val is None:
                     fill_val = ndvi.attrs.get("_FillValue", -3000.0)
-                print("fillval2: ", fill_val)
                 ndvi = ndvi.where(ndvi != fill_val)
 
                 # --- QA decoding ---
@@ -150,7 +148,6 @@ class Modis(Processor):
             year_data.append(ndvi)
 
         # stack tiles for each day returned
-        print(f"ndvi finished for {year}")
         stacked = xr.concat(year_data, dim="time").sortby("time")
         stacked = stacked.groupby("time").max("time")
         return stacked.to_dataset(name=f_cfg.name)
@@ -174,7 +171,7 @@ class Modis(Processor):
                 arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
                 """ -----------------------------------------------------------------------------------
-                    NOTE: BELOW BIT PARSING DONE SOLELY BY CHATGPT; 
+                    NOTE: BELOW BIT PARSING DONE (mostly) BY CHATGPT; 
                         THESE WERE REALLY DIFFICULT TO FIGURE OUT!!
                 ----------------------------------------------------------------------------------- """
                 lai  = arr["Lai_500m"].fillna(0).astype("float32")
@@ -205,7 +202,6 @@ class Modis(Processor):
             lai = lai.expand_dims(time=[ts])
             year_data.append(lai)
 
-        print(f"fetch lai end for {year}")
         stacked = xr.concat(year_data, dim="time").sortby("time")
         stacked = stacked.groupby("time").max("time")
         return stacked.to_dataset(name=f_cfg.name)
@@ -229,7 +225,7 @@ class Modis(Processor):
                 arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
                 """ -----------------------------------------------------------------------------------
-                    NOTE: BELOW BIT PARSING DONE SOLELY BY CHATGPT; 
+                    NOTE: BELOW BIT PARSING DONE (mostly) BY CHATGPT; 
                         THESE WERE REALLY DIFFICULT TO FIGURE OUT!!
                 ----------------------------------------------------------------------------------- """
                 burn = arr["Burn Date"].fillna(-1).astype("int16")
@@ -246,7 +242,6 @@ class Modis(Processor):
             burn_mask = burn_mask.expand_dims(time=[ts])
             year_data.append(burn_mask)
 
-        print(f"fetch burn end for {year}")
         stacked = xr.concat(year_data, dim="time").sortby("time")
         stacked = stacked.groupby("time").max("time")
         return stacked.to_dataset(name=f_cfg.name)

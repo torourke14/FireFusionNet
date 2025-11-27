@@ -19,14 +19,11 @@ class GPW(Processor):
             fstem = fp.stem or None
             year = fstem.split("_")[-1] if fstem else str(2000 + (i * 5))
             print(f"[GPWv4] Counting them one by one...")
-
+            
             with load_as_xarr(fp, name=f_cfg.name) as raw:
-                print(f"[GPWv4] loading {fp.parts[-1]}")
-                
                 p_grid = self._preclip_native_arr(raw)
                 p_grid = self._reproject_arr_to_mgrid(self.gridref, f_cfg.resampling)
 
-                print("GPW", p_grid.attrs)
                 p_grid = p_grid.where(p_grid >= 0)
 
                 if "time" not in p_grid.dims:

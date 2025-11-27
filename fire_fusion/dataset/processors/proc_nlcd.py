@@ -17,40 +17,40 @@ class NLCD(Processor):
 
         files = [f for f in NLCD_DIR.glob("*.tiff") if (f_cfg.key and f_cfg.key in f.stem)]
         if not files:
-            print(f"No .tiff files with {f_cfg.key}, do you even know how to code bro?")
+            print(f"No .tiff files with {f_cfg.key}")
             return xr.Dataset()
         
         for fp in sorted(files):
             year = int(fp.stem.split("_")[3])
 
             with load_as_xarr(fp, name=f_cfg.name) as raw:
-                arr = self._preclip_native_arr(raw)
-                arr = self._reproject_arr_to_mgrid(arr, f_cfg.resampling)
-                
-                if f_cfg.key == "LndCov":
-                    print(f"[NLCD] Computing {year} land cover % purely based on vibes..")
-                    arr = self._build_land_cover(arr, f_cfg)
-                elif f_cfg.key == "FctImp":
-                    print(f"[NLCD] Resolving the great conflict of {year} between urban folk and farm folk..")
-                    arr = self._build_frac_imp_surface(arr, f_cfg)
-                elif f_cfg.key == "tccconus":
-                    print(f"[NLCD] Swinging from the trees like its {year}, weeeeeeeeee!!")
-                    arr = self._build_canopy_cover_pct(arr, f_cfg)
-                else:
-                    print(f"[NLCD] Unknown key {f_cfg.key}???")
+                try:
+                    arr = self._preclip_native_arr(raw)
+                    arr = self._reproject_arr_to_mgrid(arr, f_cfg.resampling)
+                    
+                    if f_cfg.key == "LndCov":
+                        print(f"[NLCD] Computing {year} land cover % purely based on vibes..")
+                        arr = self._build_land_cover(arr, f_cfg)
+                    elif f_cfg.key == "FctImp":
+                        print(f"[NLCD] Resolving the great conflict of {year} between urban folk and farm folk..")
+                        arr = self._build_frac_imp_surface(arr, f_cfg)
+                    elif f_cfg.key == "tccconus":
+                        print(f"[NLCD] Swinging from the trees like its {year}, weeeeeeeeee!!")
+                        arr = self._build_canopy_cover_pct(arr, f_cfg)
+                    else:
+                        print(f"[NLCD] Unknown key {f_cfg.key}???")
 
-                if "time" not in arr.dims:
-                    ts = pd.Timestamp(f"{year}-01-01")
-                    arr = arr.expand_dims(time=[ts]).assign_coords(time=[ts])
-                feature_by_year[f_cfg.name] = arr
+                    if "time" not in arr.dims:
+                        ts = pd.Timestamp(f"{year}-01-01")
+                        arr = arr.expand_dims(time=[ts]).assign_coords(time=[ts])
+                    feature_by_year[f_cfg.name] = arr
+                except Exception as e:
+                    print(f"NLCD: Error in file build loop --", e)
+                    arr = xr.DataArray()
 
         feature_by_year = feature_by_year.sortby("time")
         feature_by_year = self._time_interpolate(feature_by_year, f_cfg.time_interp)
-
-        if "lcov_class" in feature_by_year.dims:
-            feat_data = feature_by_year.transpose("time", "lcov_class", "y", "x")
-        else:
-            feat_data = feature_by_year.transpose("time", "y", "x")
+        feat_data = feature_by_year.transpose("time", "y", "x", ...)
         return feat_data
     
     

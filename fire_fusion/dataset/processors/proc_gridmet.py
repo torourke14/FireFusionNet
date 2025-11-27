@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import List
 import numpy as np
 import xarray as xr
 import pandas as pd
@@ -12,11 +13,9 @@ class GridMet(Processor):
     def __init__(self, cfg, master_grid):
         super().__init__(cfg, master_grid)
     
-    def group_by_year(self, cfg_key: str):
+    def group_by_year(self, key: str):
         yr_groups = defaultdict(list)
-
-        files = [f for f in GRIDMET_DIR.glob(f"*.nc") if cfg_key in f.stem]
-        for f in files:
+        for f in [f for f in GRIDMET_DIR.glob("*.nc") if key in f.stem]:
             year = f.stem.split("_")[-1]
             yr_groups[year].append(f)
         return yr_groups
@@ -70,33 +69,31 @@ class GridMet(Processor):
                 _add_year_data(arr, year)
 
         elif f_cfg.key in ["th", "vs", "pr"]:
-            files = GRIDMET_DIR.glob(f"{f_cfg.key}.nc")
+            files = GRIDMET_DIR.glob(f"{f_cfg.key}*.nc")
 
             for i, fp in enumerate(sorted(files)):
                 year = fp.stem.split("_")[-1]
                 
                 if f_cfg.key == "th":
                     print(f"[gridMET] Just broke wind. {' AGAIN' if i > 2 else ''}")
-                    raw = load_as_xarr(fp, name=f_cfg.name)
+                    raw = load_as_xarr(fp, name=f_cfg.name, variable='wind_from_direction')
                     vals = self._reproject_arr_to_mgrid(self._preclip_native_arr(raw), f_cfg.resampling)
                     arr = self._build_wind_dir(vals, f_cfg)
 
                 elif f_cfg.key == "vs":
                     print(f"[gridMET] Cranking backyard wind tunnel to {i*36 + (i*8) % 3}mph")
-                    raw = load_as_xarr(fp, name=f_cfg.name)
+                    raw = load_as_xarr(fp, name=f_cfg.name, variable="wind_speed")
                     vals = self._reproject_arr_to_mgrid(self._preclip_native_arr(raw), f_cfg.resampling)
-                    arr = self._build_wind_spd(arr, f_cfg)
+                    arr = self._build_wind_spd(vals, f_cfg)
 
                 elif f_cfg.key == "pr":
                     print(f"[gridMET] Negotiating with the rainman")
-                    raw = load_as_xarr(fp, name=f_cfg.name)
+                    raw = load_as_xarr(fp, name=f_cfg.name, variable="precipitation_amount")
                     vals = self._reproject_arr_to_mgrid(self._preclip_native_arr(raw), f_cfg.resampling)
-                    arr = self._build_precip(arr, f_cfg)
+                    arr = self._build_precip(vals, f_cfg)
 
                 _add_year_data(arr, year)
                 
-
-        # If nothing was added, bail out early
         if len(feature_by_yrs.data_vars) == 0:
             print(f"[gridMET] No data variables built for {f_cfg.name}, returning empty Dataset")
             return xr.Dataset()
@@ -105,7 +102,7 @@ class GridMet(Processor):
 
         feature_by_yrs = feature_by_yrs.sortby("time")
         feature_by_yrs = self._time_interpolate(feature_by_yrs, f_cfg.time_interp)
-        feature_by_yrs = feature_by_yrs.transpose("time", "y", "x")
+        feature_by_yrs = feature_by_yrs.transpose("time", "y", "x", ...)
         return feature_by_yrs
         
 

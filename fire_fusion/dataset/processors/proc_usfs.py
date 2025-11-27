@@ -31,19 +31,13 @@ class UsfsFire(Processor):
             file = USFS_DIR / "National_USFS_Fire_Perimeter_(Feature_Layer).shp"
             layer = self._build_perim_layer(file, f_cfg)
 
-        print(f"made it out alive")
-
-        if "burn_cause" in layer.dims:
-            layer = layer.to_dataset(dim="burn_cause").sortby("time")
-        else:
-            layer = layer.to_dataset(name=f_cfg.name).sortby("time")
-
+        # if "burn_cause" in layer.dims:
+        #     layer = layer.to_dataset(dim="burn_cause").sortby("time")
+        # else:
+        layer = layer.to_dataset(name=f_cfg.name).sortby("time")
         layer = self._time_interpolate(layer, f_cfg.time_interp)
-        
-        if "burn_cause" in layer.dims:
-            layer = layer.transpose("time", "burn_cause", "y", "x")
-        else:
-            layer = layer.transpose("time", "y", "x")
+        layer = layer.transpose("time", "y", "x", ...)
+            
         return layer
         
     
@@ -267,6 +261,7 @@ class UsfsFire(Processor):
 
         cause_txy = xr.DataArray(
             time_grid,
+            name=f_cfg.name,
             coords={ 
                 "time": sT_ix, 
                 "burn_cause": cause_labels, 

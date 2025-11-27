@@ -28,7 +28,7 @@ class CensusRoads(Processor):
             crs = gpd.read_file(road_paths[0]).crs
         )
         
-        print(f"Informing tensors to not be little whiners")
+        print(f"Informing tensors to stop whining.. MORE DATA!")
 
         roads = gpd.clip(roads, box(
             self.gridref.attrs['x_min'], self.gridref.attrs['y_min'],
@@ -68,7 +68,7 @@ class CensusRoads(Processor):
             dist_3d_m,
             dims=self.gridref.dims,
             coords=self.gridref.coords,
-            name=f_config.name or "dist_to_road",
+            name=f_config.name or "d_to_road",
         )
 
         # write the crs reference and transform to rioxarray engine, return with it
