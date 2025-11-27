@@ -28,86 +28,90 @@ class DerivedProcessor:
         modis = (ds["modis_burn"].fillna(0) > 0)
         usfs_o = (ds["usfs_burn"].fillna(0) > 0)
         usfs_p = (ds["usfs_perimeter"].fillna(0) >= 0)
-        # INTERMEDIATE VARIABLES ONLY
-        burning_t = (modis | usfs_o | usfs_p)
-        burning_tp1 = burning_t.shift(time=-1, fill_value=0)
+        
         
         # --- FIRE T + 1 LABEL --------------------------------------------------
-        ignition_next = xr.DataArray(
+        burning_t = (modis | usfs_o | usfs_p)
+        burning_tp1 = burning_t.shift(time=-1, fill_value=0)
+        ignition_next, burn_loss_mask = self._ignition_next(burning_t, burning_tp1)
+
+        # --- FIRE CAUSE LABEL ----------------------------------------------------
+        ign_next_cause, valid_cause_mask = self._ign_next_cause(ds['usfs_burn_cause'], ignition_next)
+
+        ds = ds.assign(**{
+            self.labels[0].name: ignition_next,    # ign_next
+            self.labels[1].name: ign_next_cause,   # ign_next_cause
+            self.masks[0].name: burn_loss_mask,    # act_fire_mask
+            self.masks[1].name: valid_cause_mask   # v_cause_mask
+            # water mask added in extraction       # water_mask
+        })
+
+        for deriv_feat in self.drv_features:
+            name = deriv_feat.name
+
+            try:
+                if deriv_feat.key == "fire_spatial_roll":
+                    burn_spatial_rolling = self._compute_fire_spatial_recent(burning_t, sp_burn_kernel, sp_burn_window, name)
+                    ds = ds.assign({ name: burn_spatial_rolling })
+
+                elif deriv_feat.key == "precip_2d": 
+                    p5d = (ds['precip']
+                        .rolling(time=2, min_periods=None, center=deriv_feat.agg_center)
+                        .mean().fillna(0)
+                    )
+                    ds = ds.assign({ name: p5d })
+
+                elif deriv_feat.key == "precip_4d":
+                    p14d = (ds['precip']
+                        .rolling(time=4, min_periods=None, center=deriv_feat.agg_center)
+                        .mean().fillna(0)
+                    )
+                    ds = ds.assign({ name: p14d })
+
+                elif deriv_feat.key == "ndvi_anomaly": 
+                    ndvi_by_doy = ds['modis_ndvi'].groupby("time.dayofyear")
+                    ndvi_anom = ndvi_by_doy.mean("time") - ndvi_by_doy
+                    ndvi_anom.name = name
+                    ds = ds.assign({ name: ndvi_anom })
+
+                elif deriv_feat.key == "ffwi": 
+                    fosberg_fwi = self._compute_fosberg_fwi(Tf=ds['temp_avg'], sH=ds['rh_pct'], Ws=ds['wind_mph'])
+                    ds = ds.assign({ name: fosberg_fwi })
+
+                elif deriv_feat.key == "doy_sin":
+                    theta = 2 * np.pi * (ds['time'].dt.dayofyear / 365.0)
+                    arr1d = xr.DataArray(theta, dims=['time'], coords={ 'time': ds.time})
+                    arr2d = arr1d[:, None, None]
+                    ds = ds.assign({ 'doy_sin': np.sin(arr2d), 'doy_cos': np.cos(arr2d) })
+            except Exception as e:
+                print(f"Feature extraction for {name} failed: ", e)
+                continue
+
+        return ds, burn_loss_mask, ds['water_mask']
+
+    def _ignition_next(self, burning_t: xr.DataArray, burning_tp1: xr.DataArray):
+        ignition_next_label = xr.DataArray(
             ((burning_t == 0) & (burning_tp1 == 1)).astype("uint8"),
             dims=burning_t.dims,
             coords=burning_t.coords,
             name=self.drv_features[0].name
         )
-
-        # -- MASK -- only compute loss (1) if not burning at next timestep on cells not burning at t+1
-        burn_loss_mask = (burning_t == 0).astype("uint8")
-
-        # --- FIRE CAUSE LABEL ----------------------------------------------------
-        cause_id = xr.full_like(ds['usfs_burn_cause'], fill_value=-1, dtype="int16")
-        for idx, klass in enumerate(CAUSAL_CLASSES):
-            for token in CAUSE_RAW_MAP[klass]:
-                cause_id = xr.where(ds['usfs_burn_cause'] == token, idx, cause_id)
-        # saimilarly shift forward one time step
-        # trainer must ignore -1, never feed it to cross_entropy w/o masking
-        cause_id_tp1 = cause_id.shift(time=-1, fill_value=-1)
+        active_burn_mask = (burning_t == 0).astype("uint8")
+        return ignition_next_label, active_burn_mask
 
 
-        ignition_next_cause = xr.where(ignition_next == 1, cause_id_tp1, -1)
+    def _ign_next_cause(self, burn_cause_t: xr.DataArray, ignition_next: xr.DataArray):
+        # one hot >> fill -1's >> shift forward
+        cause_t_oh = burn_cause_t.argmax(dim="burn_cause")
+        cause_t_oh = xr.where(burn_cause_t.sum(dim="burn_cause") > 0, cause_t_oh, -1)
+        cause_tp1_oh = cause_t_oh.shift(time=-1, fill_value=-1)
 
-        # -- MASK -- Disclude causes which are unknown/nan from the mask
-        valid_cause_mask = (cause_id_tp1 >= 0).astype("uint8")
-        
+        # !!! next cause = cause @t+1 conditioned on ignition @t+1
+        ign_next_cause = xr.where(ignition_next == 1, cause_tp1_oh, -1)
+        # !!! Mask = 1 everywhere we have a "valid cause" @t+1, 0 otherwise
+        valid_cause_mask = (cause_tp1_oh >= 0).astype("uint8")
 
-        ds = ds.assign(**{
-            self.labels[0].name: ignition_next,         # ign_next
-            self.labels[1].name: ignition_next_cause,   # ign_next_cause
-            self.masks[0].name: burn_loss_mask ,        # act_fire_mask
-            self.masks[1].name: valid_cause_mask        # v_cause_mask
-            # water mask already added in feature extraction
-        })
-        
-
-        print(f"Reversing polarity of the of the anti-polarity reverser...")
-
-        for deriv_feat in self.drv_features:
-            name = deriv_feat.name
-
-            if deriv_feat.key == "fire_spatial_roll":
-                burn_spatial_rolling = self._compute_fire_spatial_recent(burning_t, sp_burn_kernel, sp_burn_window, name)
-                ds = ds.assign({ name: burn_spatial_rolling })
-
-            elif deriv_feat.key == "precip_2d": 
-                p5d = (ds['precip']
-                    .rolling(time=2, min_periods=None, center=deriv_feat.agg_center)
-                    .mean().fillna(0)
-                )
-                ds = ds.assign({ name: p5d })
-
-            elif deriv_feat.key == "precip_4d":
-                p14d = (ds['precip']
-                    .rolling(time=4, min_periods=None, center=deriv_feat.agg_center)
-                    .mean().fillna(0)
-                )
-                ds = ds.assign({ name: p14d })
-
-            elif deriv_feat.key == "ndvi_anomaly": 
-                ndvi_by_doy = ds['modis_ndvi'].groupby("time.dayofyear")
-                ndvi_anom = ndvi_by_doy.mean("time") - ndvi_by_doy
-                ndvi_anom.name = name
-                ds = ds.assign({ name: ndvi_anom })
-
-            elif deriv_feat.key == "ffwi": 
-                fosberg_fwi = self._compute_fosberg_fwi(Tf=ds['temp_avg'], sH=ds['rh_pct'], Ws=ds['wind_mph'])
-                ds = ds.assign({ name: fosberg_fwi })
-
-            elif deriv_feat.key == "doy_sin":
-                theta = 2 * np.pi * (ds['time'].dt.dayofyear / 365.0)
-                arr1d = xr.DataArray(theta, dims=['time'], coords={ 'time': ds.time})
-                arr2d = arr1d[:, None, None]
-                ds = ds.assign({ 'doy_sin': np.sin(arr2d), 'doy_cos': np.cos(arr2d) })
-
-        return ds, burn_loss_mask, ds['water_mask']
+        return ign_next_cause, valid_cause_mask
 
 
     def _compute_fire_spatial_recent(self,
