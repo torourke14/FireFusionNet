@@ -90,7 +90,13 @@ class GridMet(Processor):
                     print(f"[gridMET] Negotiating with the rainman")
                     raw = load_as_xarr(fp, name=f_cfg.name, variable="precipitation_amount")
                     vals = self._reproject_arr_to_mgrid(self._preclip_native_arr(raw), f_cfg.resampling)
-                    arr = self._build_precip(vals, f_cfg)
+                    arr = self._build_precip_mm(vals, f_cfg)
+                
+                elif f_cfg.key == "fm100":
+                    print(f"[gridMET] Collecting fuel moisture from the dead veggies")
+                    raw = load_as_xarr(fp, name=f_cfg.name, variable="dead_fuel_moisture_100hr")
+                    vals = self._reproject_arr_to_mgrid(self._preclip_native_arr(raw), f_cfg.resampling)
+                    arr = self._build_dead_fuel_moisture_pct(vals, f_cfg)
 
                 _add_year_data(arr, year)
                 
@@ -107,6 +113,9 @@ class GridMet(Processor):
         
 
     def _build_temp(self, vmin: xr.DataArray, vmax: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
+        """ In: min/max near-surface temprature (K)
+            Out: clip -> avg near-surface temperature (F)
+        """
         vmin = xr.apply_ufunc(K_to_F, vmin).astype("float32")
         vmax = xr.apply_ufunc(K_to_F, vmax).astype("float32")
 
@@ -120,41 +129,56 @@ class GridMet(Processor):
         return data
 
     def _build_rel_humidity(self, vmin: xr.DataArray, vmax: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
-        # average rmin and rmax
-        vmin = (vmin / 100).clip(0, 1)
-        vmax = (vmax / 100).clip(0, 1)
+        """ In: min relative humidity (%), max relative humidity (%)
+            Out: clipped, averagerd
+        """
+        vmin = vmin.clip(0, 100)
+        vmax = vmax.clip(0, 100)
 
         data = (xr.apply_ufunc(np.abs, vmax + vmin) / 2).astype("float32")
+        data.name = f_cfg.name
         return data
 
     def _build_wind_dir(self, val: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
+        """ In: wind (coming from) direction
+            Out: clipped
+        """
         if f_cfg.clip is not None:
             low, high = f_cfg.clip
             val = val.clip(low, high)
-
-        rads = xr.apply_ufunc(np.deg2rad, val)
-        val_ew = xr.apply_ufunc(np.cos, rads).astype("float32")
-        val_ns = xr.apply_ufunc(np.sin, rads).astype("float32")
-
-        wind = xr.concat([val_ew, val_ns], dim="component")
-        wind = wind.assign_coords(component=['h', 'v'])
-        return wind
+        val.name = f_cfg.name
+        return val
 
     def _build_wind_spd(self, val: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
-        val = (val * 2.23693629)
+        """ In: wind speeed (m/s)
+            Out: wind speed (m/h) + clip
+        """
+        data = (val * 2.23693629)
 
         if f_cfg.clip is not None:
             low, high = f_cfg.clip
+            data = data.clip(low, high)
+        
+        data.name = f_cfg.name
+        return data.astype("float32")
+    
+    def _build_precip_mm(self, val: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
+        """ In: precipitation (mm)
+            Out: precipitation (mm)
+        """
+        if f_cfg.clip is not None:
+            low, high = f_cfg.clip
             val = val.clip(low, high)
-
+        val.name = f_cfg.name
         return val.astype("float32")
     
-    def _build_precip(self, val: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
-        if f_cfg.clip is not None:
-            low, high = f_cfg.clip
-            val = val.clip(low, high)
-
-        return val.astype("float32")
+    def _build_dead_fuel_moisture_pct(self, val: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
+        """ In: precipitation (mm)
+            Out: precipitation (mm)
+        """
+        data = val.clip(0, 100).astype("float32")
+        data.name = f_cfg.name
+        return data
         
 
 

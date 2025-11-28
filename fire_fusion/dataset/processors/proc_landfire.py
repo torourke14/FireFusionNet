@@ -42,15 +42,15 @@ class Landfire(Processor):
                     continue
 
                 ts = pd.Timestamp(f"{year}-01-01")
-                if isinstance(arr, xr.DataArray):
-                    if "time" not in arr.dims:
-                        arr = arr.expand_dims(time=[ts]).assign_coords(time=[ts])
-                    feature_by_year[f_cfg.name] = arr
-                else:
-                    for da in arr.data_vars.values():
-                        if "time" not in arr.dims:
-                            da = da.expand_dims(time=[ts]).assign_coords(time=[ts])
-                        feature_by_year[da.name] = da
+                # if isinstance(arr, xr.DataArray):
+                if "time" not in arr.dims:
+                    arr = arr.expand_dims(time=[ts]).assign_coords(time=[ts])
+                feature_by_year[f_cfg.name] = arr
+                # else:
+                #     for da in arr.data_vars.values():
+                #         if "time" not in arr.dims:
+                #             da = da.expand_dims(time=[ts]).assign_coords(time=[ts])
+                #         feature_by_year[da.name] = da
 
         feature_by_year = feature_by_year.sortby("time")
         feature_by_year = self._time_interpolate(feature_by_year, f_cfg.time_interp)
@@ -67,18 +67,13 @@ class Landfire(Processor):
         return feature.astype("float32")
 
 
-    def _build_aspect(self, feature: xr.DataArray, f_cfg: Feature) -> xr.Dataset:
+    def _build_aspect(self, feature: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
         print("[LF] Collecting aspect data (radians) by climbing all nearby mountains...")
         if f_cfg.clip is not None:
             feature = feature.clip(f_cfg.clip[0], f_cfg.clip[1])
-
-        rads = xr.apply_ufunc(np.deg2rad, feature)
-        cos = xr.apply_ufunc(np.cos, rads).astype("float32")
-        sin = xr.apply_ufunc(np.sin, rads).astype("float32")
-        cos.name = f_cfg.name + "_cos"
-        sin.name = f_cfg.name + "_sin"
-
-        return xr.Dataset({ cos.name: cos, sin.name: sin  })
+        
+        feature.name = f_cfg.name
+        return feature
 
 
     def _build_slope_degrees(self, feature: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
@@ -86,8 +81,6 @@ class Landfire(Processor):
         if f_cfg.clip is not None:
             feature = feature.clip(f_cfg.clip[0], f_cfg.clip[1])
         
-        feature = xr.apply_ufunc(np.deg2rad, feature)
-        feature = xr.apply_ufunc(np.sin, feature)
         feature.name = f_cfg.name
         return feature.astype("float32")
     

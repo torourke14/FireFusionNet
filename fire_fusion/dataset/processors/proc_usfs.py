@@ -45,10 +45,16 @@ class UsfsFire(Processor):
             file = USFS_DIR / "National_USFS_Fire_Perimeter_(Feature_Layer).shp"
             layer = self._build_perim_layer(file, f_cfg)
 
-        layer_ds_full = self._time_interpolate(
-            layer.to_dataset(name=f_cfg.name).sortby("time"), 
-            f_cfg.time_interp
-        ).transpose("time", "y", "x", ...)
+        # None of these should be time interpd
+        # layer_ds_full = self._time_interpolate(
+        #     layer.to_dataset(name=f_cfg.name).sortby("time"), 
+        #     f_cfg.time_interp
+        # ).transpose("time", "y", "x", ...)
+        layer_ds_full = (
+            layer.to_dataset(name=f_cfg.name)
+            .sortby("time")
+            .transpose("time", "y", "x", ...)
+        )
         del layer
             
         return layer_ds_full

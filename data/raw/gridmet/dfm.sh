@@ -1,0 +1,22 @@
+#!/bin/bash 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2000.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2001.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2002.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2003.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2004.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2005.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2006.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2007.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2008.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2009.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2010.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2011.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2012.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2013.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2014.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2015.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2016.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2017.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2018.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2019.nc 
+wget -nc -c -nd http://www.northwestknowledge.net/metdata/data/fm100_2020.nc 

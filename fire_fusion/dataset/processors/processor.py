@@ -124,10 +124,10 @@ class Processor:
                 interpolate over them
         """
         if not interpol: return source_ds
+        interp_type, interp_method = interpol
         
         time_index = self.gridref.attrs['time_index']
-        interp_type, interp_method = interpol
-
+        
         # Static or single-slice features -> broadcast over master time
         if interp_type == "broadcast":
             if "time" not in source_ds.dims:
@@ -148,6 +148,8 @@ class Processor:
                 print("Interpolator source_ds missing time dimension")
                 return source_ds
 
+            if not interp_method:
+                return source_ds
             # Ensure increasing order for interpolation
             feature_sorted = source_ds.sortby("time")
             interp = feature_sorted.interp(time=time_index, method=interp_method)

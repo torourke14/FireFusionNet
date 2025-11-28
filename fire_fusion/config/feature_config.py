@@ -1,9 +1,9 @@
 # Who wants to deal with tuples in JSON, anyways??
 from dataclasses import dataclass
+import numpy as np
 from rasterio.enums import Resampling
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from xarray.core.types import InterpOptions
-from .path_config import CROADS_DIR, USFS_DIR, GPW_DIR, GRIDMET_DIR, LANDFIRE_DIR, MODIS_DIR, NLCD_DIR
 
 
 CAUSAL_CLASSES = [
@@ -80,69 +80,96 @@ class Feature:
     is_label: Optional[bool] = False
     is_mask: Optional[bool] = False
     # derived features
+    expand_names: Optional[List[str]] = None # names of new features to expand from single feature
     func: Optional[str] = "" # DerivedProcessor function name
     drop_inputs: Optional[List[str] | None] = None
     ds_clip: Optional[Tuple[float, float]] = None   # clip values after processing
     ds_norms: Optional[List[str]] = None            # sequence of normalizations
 
+
 def base_feat_config():
     return {
         ### --- Processors -----------------------------------------
-        "GRIDMET": [
-            Feature(
-                name = "temp_avg",
-                key = "tmm",
-                clip = (0.0, 120.0), #Far
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear"),
-                ds_norms = ["z_score"],
-            ),
-            Feature(
-                name = "rhumidity_pct",
-                key = "rm",
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear"),
-                ds_norms = ["z_score"],
-            ),
-            Feature(
-                name = "wind_mph",
-                key = "vs",
-                clip = (0.0, 100.0),
-                resampling = Resampling.bilinear,
-                time_interp = ("existing", "quadratic"),
-                ds_norms = ["log1p", "z_score"]
-            ),
-            Feature(
-                name = "precip", # inchdes
-                key = "pr",
-                resampling = Resampling.bilinear,
-                time_interp = ("existing", "linear"),
-                ds_norms = ["log1p", "z_score"]
-            ),
-            Feature(
-                name = "wind_dir",
-                key = "th",
-                clip = (0.0, 360.0),
-                resampling = Resampling.bilinear,
-                time_interp = ("existing", "quadratic"),
-            ),
-        ],
         "FIRE_USFS": [
             Feature(
                 name = "usfs_burn",
                 key = "Fire_Occurence",
-                time_interp = ("existing", "zero")
+                # NO TIME INTERPOLATION
+                # dropped
             ),
             Feature(
                 name = "usfs_burn_cause",
                 key = "Fire_Cause",
-                time_interp = ("existing", "zero")
+                # NO TIME INTERPOLATION
+                # dropped
             ),
             Feature(
                 name = "usfs_perimeter",
                 key = "Fire_Perimeter",
-                time_interp = ("existing", "zero")
+                # NO TIME INTERPOLATION
+                # dropped
             )  
+        ],
+        "MODIS": [
+            Feature(
+                name = "modis_burn",
+                key = "MCD64A1",
+                # 0/1 is ordinal
+                resampling = Resampling.nearest,
+                # NO TIME INTERPOLATION
+                # dropped
+            ),
+            Feature(
+                name = "modis_lai_canopy",
+                key = "MCD15A2H",
+                # simple reprojection
+                resampling = Resampling.nearest, 
+                # Ensure sharp dropoffs are captured
+                time_interp = ("existing", "nearest"),
+                ds_clip=(0.0, 10.0),
+                ds_norms = ["z_score"],
+            ),
+            Feature(
+                name = "modis_ndvi", # step function holds values for dropoffs (fires)
+                key = "MOD13Q1",
+                # simple reprojection
+                resampling = Resampling.nearest,
+                # Ensure sharp dropoffs are captured
+                time_interp = ("existing", "nearest"),
+                # dropped
+            ),
+        ],
+        "LANDFIRE": [
+            Feature(
+                name = "elevation",
+                key = "_Elev",
+                resampling = Resampling.bilinear,
+                clip = (0.0, 5000.0),
+                time_interp = ("broadcast", "linear"),
+                ds_norms = ["z_score"]
+            ),
+            Feature(
+                name = "slope",
+                key = "_SlpD",
+                clip=(0, 60),
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear"),
+                ds_norms = ["z_score"]
+            ),
+            Feature(
+                name = "aspect",
+                key = "_Asp",
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear"),
+                # dropped
+            ),
+            Feature(
+                is_mask=True,
+                name = "water_mask",
+                key = "_EVC",
+                resampling = Resampling.nearest,
+                time_interp = ("broadcast", "linear")
+            )
         ],
         "NLCD": [
             Feature(
@@ -159,7 +186,6 @@ def base_feat_config():
                 resampling = Resampling.bilinear,
                 time_interp = ("broadcast", "linear"),
                 ds_clip = (0.0, 1.0),
-                ds_norms = ["minmax"]
             ),
             Feature(
                 name = "canopy_cover_pct",
@@ -167,65 +193,64 @@ def base_feat_config():
                 resampling = Resampling.bilinear,
                 time_interp = ("broadcast", "linear"),
                 ds_clip = (0.0, 1.0),
-                ds_norms = ["minmax"]
             )
         ],
-        "LANDFIRE": [
+        "GRIDMET": [
             Feature(
-                name = "elevation",
-                key = "_Elev",
+                name = "temp_avg",
+                key = "tmm",
+                clip = (0.0, 120.0), #Far
                 resampling = Resampling.bilinear,
-                clip = (0.0, 5000.0),
-                time_interp = ("broadcast", "linear"),
-                ds_norms = ["z_score"]
-            ),
-            Feature(
-                name = "slope",
-                key = "_SlpD",
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear"),
-                ds_norms = ["z_score"]
-            ),
-            Feature(
-                name = "aspect",
-                key = "_Asp",
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear"),
-            ),
-            Feature(
-                is_mask=True,
-                name = "water_mask",
-                key = "_EVC",
-                resampling = Resampling.nearest,
-                time_interp = ("broadcast", "linear")
-            )
-        ],
-        "MODIS": [
-            Feature(
-                name = "modis_burn",
-                key = "MCD64A1",
-                time_interp = ("existing", "nearest"),
-            ),
-            Feature(
-                name = "modis_lai_canopy",
-                key = "MCD15A2H",
-                resampling = Resampling.bilinear,
-                time_interp = ("existing", "nearest"),
-                ds_clip=(0.0, 10.0),
+                time_interp = ("existing", "linear"),
                 ds_norms = ["z_score"],
             ),
             Feature(
-                name = "modis_ndvi",
-                key = "MOD13Q1",
+                name = "rel_humidity",
+                key = "rm",
                 resampling = Resampling.bilinear,
-                time_interp = ("existing", "nearest"),
+                time_interp = ("existing", "linear"),
+                ds_norms = ["z_score"],
+            ),
+            Feature(
+                name = "wind_mph",
+                key = "vs",
+                resampling = Resampling.bilinear,
+                time_interp = ("existing", "linear"),
+                ds_clip = (0.0, 100.0),
+                ds_norms = ["log1p", "z_score"]
+            ),
+            Feature(
+                name = "wind_dir",
+                key = "th",
+                clip = (0.0, 360.0),
+                resampling = Resampling.bilinear,
+                time_interp = ("existing", "linear"),
+                # dropped
+            ),
+            Feature(
+                name = "precip_mm", # inchdes
+                key = "pr",
+                clip = (0, 150),
+                resampling = Resampling.bilinear,
+                time_interp = ("existing", "linear"),
+                ds_norms = ["log1p", "z_score"]
+            ),
+            Feature(
+                name = "dead_fmo_100hr",
+                key = "fm100",
+                clip = (0.0, 100.0),
+                resampling = Resampling.bilinear,
+                time_interp = ("existing", "linear"),
+                ds_norms = ["z_score"]
             ),
         ],
         "GPW": [
             Feature(
                 name = "pop_density",
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear")
+                resampling = Resampling.nearest,
+                time_interp = ("broadcast", "linear"),
+                ds_clip = (0.0, np.inf),
+                ds_norms=["log1p", "z_score"]
             )
         ],
         "CENSUSROADS": [
@@ -233,74 +258,69 @@ def base_feat_config():
                 name = "d_to_road",
                 resampling = Resampling.nearest,
                 time_interp = ("broadcast", "linear"),
+                ds_clip=(0, 10000), # 10km
                 ds_norms = ["log1p", "z_score"]
             )
         ],
     }
 
 
-def drv_feat_config():
+def drv_feat_config() -> List[Feature]:
     """ SEQUENTIAL list of features to derive """
     return [
-        Feature(is_label=True,
-            name="ign_next",
+        Feature(name="ign_next", is_label=True, 
             func="build_ignition_next",
             inputs=["modis_burn", "usfs_burn", "usfs_perimeter"],
         ),
-        Feature(is_mask=True,
-            name="act_fire_mask",
+        Feature(name="act_fire_mask", is_mask=True, 
             func="build_act_fire_mask",
             inputs=["modis_burn", "usfs_burn", "usfs_perimeter"],
         ),
-
-        Feature(
-            name = "fire_spatial_roll",
+        Feature(name = "fire_spatial_roll",
             func = "build_fire_spatial_rolling",
-            time_interp = ("existing", "nearest"),
             inputs=["modis_burn", "usfs_burn", "usfs_perimeter"],
             drop_inputs=["modis_burn", "usfs_burn", "usfs_perimeter"],
             ds_norms = ["log1p", "z_score"],
         ),
-
-        Feature(is_label=True,
-            name="ign_next_cause",
+        Feature(name="ign_next_cause", is_label=True, 
             func="build_ign_next_cause",
             inputs=["usfs_burn_cause", "ign_next"],
         ),
-        Feature(is_mask=True,
-            name="valid_cause_mask",
+        Feature(name="valid_cause_mask", is_mask=True,
             func="build_valid_cause_mask",
-            inputs=["usfs_burn_cause", "ign_next"], drop_inputs=["usfs_burn_cause"],
+            inputs=["usfs_burn_cause", "ign_next"],
+            drop_inputs=["usfs_burn_cause"],
         ),
         
-        Feature(
-            name = "precip_2d",
-            func = "build_precip_2d",
-            resampling = Resampling.bilinear,
-            time_interp = ("existing", "linear"),
-            inputs=["precip"],
+
+
+        Feature(expand_names = ["precip_2d", "precip_5d"],
+            func = "build_precip_cum",
+            inputs=["precip_mm"], drop_inputs = None,
             ds_norms = ["log1p", "z_score"],
         ),
-        Feature(
-            name = "precip_5d",
-            func = "build_precip_5d",
-            resampling = Resampling.bilinear,
-            time_interp = ("existing", "linear"),
-            inputs=["precip"], drop_inputs=["precip"],
-            ds_norms = ["log1p", "z_score"],
+        Feature(expand_names = ["wind_dir_ew", "wind_dir_ns"],
+            func = "build_wind_ew_ns",
+            inputs=["wind_dir"],
+            drop_inputs=["wind_dir"],
         ),
-        
+        Feature(expand_names = ["aspect_ew", "aspect_ns"],
+            func = "build_aspect_ew_ns",
+            inputs=["aspect"],
+            drop_inputs=["aspect"],
+        ),
         Feature(
             name = "ndvi_anomaly",
             func = "build_ndvi_anomaly",
-            inputs=["modis_ndvi"], drop_inputs=["modis_ndvi"],
+            inputs=["modis_ndvi"],
+            drop_inputs=["modis_ndvi"],
             ds_clip=(-0.1, 1.0),
             ds_norms = ["z_score"],
         ),
         Feature(
             name = "fosberg_fwi",
             func = 'build_ffwi',
-            inputs=["temp_avg", "rhumidity_pct", "wind_mph"],
+            inputs=["temp_avg", "rel_humidity", "wind_mph"],
             ds_norms = ["z_score"],
         ),
         Feature(
