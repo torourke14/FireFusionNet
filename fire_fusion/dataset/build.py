@@ -86,43 +86,45 @@ class FeatureGrid:
 
     # ------------------------------------------------------------------------------------
     
-    def _apply_mask_nan(self):
-        nan_mask = (xr.apply_ufunc(
-            np.isfinite, 
-            self.master_ds.to_array("channel")
-        ).all(dim="channel"))
+    def _apply_mask_nan(self) -> None:
+        excluded = set(self.label_names) | set(self.mask_names) | {"nan_mask"}
+
+        features = [f for f in self.master_ds.data_vars if f not in excluded]
+        data = self.master_ds[features].to_array("channel")
         
-        self.master_ds = self.master_ds.assign({
-            "nan_mask": nan_mask
-        })
+        # keeps cells where ALL channels are finite, everywhere else 0
+        # convert back to dataset
+        nan_mask = data.notnull().all(dim="channel")
+        masked = data.where(nan_mask, 0.0).fillna(0.0)
+        ds_masked = masked.to_dataset(dim="channel")
 
-        for var in self.master_ds.data_vars:
-            if var in self.label_names or var in self.mask_names or var == "nan_mask":
-                continue
-            
-            da = self.master_ds[var]
-            if np.issubdtype(da.dtype, np.floating):
-                self.master_ds[var] = da.where(nan_mask == 1, 0.0).fillna(0.0)
+        # update feature variables in master_ds
+        ds_masked = ds_masked.assign_coords(channel=("channel", features))
+        ds_masked = ds_masked.rename_vars({old: name for old, name in zip(ds_masked.data_vars, features)})
 
-        return self.master_ds
+        # in place update
+        self.master_ds.update(ds_masked)
     
 
-    def _apply_normalize(self):
+    def _apply_normalize(self) -> None:
         for f in self.master_ds.data_vars:
             if f in self.mask_names or f in self.label_names:
                 continue
             
             # find config
             feature = self.master_ds[f]
-            f_config = f_config = next((cfg
-                for key, feature_list in self.fconfig.items() if key not in ("LABELS", "MASKS")
-                for cfg in feature_list if cfg.name == f
+            f_config = next((cfg for 
+                cfg in (
+                    [c for fl in base_feat_config().values() for c in fl if (c.name == f)] + 
+                    [c for c in drv_feat_config() if (c.name == f or f in (c.expand_names or []))]
+                )
             ), None)
+
             if f_config is None:
                 print(f"can't find feature")
                 continue
 
-            print(f"[FeatureGrid] normalizing {f_config.name}")
+            print(f"[FeatureGrid] normalizing {f_config.name if f_config.name else f_config.expand_names}")
 
             clip = getattr(f_config, "ds_clip", None)
             norms = getattr(f_config, "ds_norms", None)
@@ -152,25 +154,36 @@ class FeatureGrid:
             self.master_ds[f] = feature
 
 
-    def _apply_derived(self):
+    def _apply_derived(self) -> None:
         for cfg in self.drv_config:
-            func   = cfg.func
-            inputs = cfg.inputs
-            drop_inputs = cfg.drop_inputs
+            func        = cfg.func
+            inputs      = cfg.inputs
+            
+            new_fname = cfg.expand_names if cfg.expand_names else cfg.name
 
             if func:
                 drv_fn = getattr(self.drv_processor, func)
-                sub = self.master_ds[inputs]
-                out = drv_fn(subds=sub, name=cfg.name)
 
-            self.master_ds[out.name] = out
-            # self.master_ds = self.master_ds.merge(out)
+                if func == "build_doy_sin":
+                    subds = self.master_ds
+                    out = drv_fn(subds, new_fname, self.grid)
+                else:
+                    subds = self.master_ds[inputs]
+                    out = drv_fn(subds, new_fname)
 
-            if inputs is not None and drop_inputs is not None:
-                self.master_ds = self.master_ds.drop_vars(inputs)
+                if isinstance(out, xr.DataArray):
+                    self.master_ds[out.name] = out
+                elif isinstance(out, xr.Dataset):
+                    self.master_ds = self.master_ds.merge(out)
+
+            if cfg.drop_inputs is not None:
+                self.master_ds = self.master_ds.drop_vars(cfg.drop_inputs)
+
+        print(f"[FeatureGrid] Finished deriving features!")
+        print(f"- dims: {self.master_ds.dims}")
 
     
-    def _save_splits_to_zarr(self, split=(0.6, 0.2, 0.2)):
+    def _save_splits_to_zarr(self, split=(0.6, 0.2, 0.2)) -> None:
         print("Spraying neutrino stabilization goo in sub-basement level 7...")
 
         assert (sum(split) - 1.0) < 1e-6, f"splits must equal 1.0"
@@ -207,7 +220,7 @@ class FeatureGrid:
         )
 
         
-    def build_features(self):
+    def build_features(self) -> None:
         print("Warming up GPU using low-emission wildfire simulations...")
         layers: List[xr.Dataset] = []
 
@@ -224,7 +237,7 @@ class FeatureGrid:
                 layers.append(layer)
 
         print(f"[FeatureGrid] Finished extracting features! ")
-        del self.processors, self.grid, self.time_index
+        del self.processors
         try:
             self.master_ds: xr.Dataset = xr.merge(layers, join="outer")
         except Exception as e:
@@ -257,7 +270,7 @@ class FeatureGrid:
         print(f"Saved splits to .zarrs <3")
 
 
-    def load_features(self, batch_size, device, num_workers, pin_memory):
+    def load_features(self, batch_size, device, num_workers, pin_memory) -> None:
         train_ds = xr.open_zarr(TRAIN_DATA_DIR / f"train.zarr")
 
         # handle class imbalance
@@ -310,7 +323,7 @@ class FeatureGrid:
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        return
+        print(f"Splits saved to Feature Grid. Access via 'self.train_loader/val_loader/test_loader'")
 
 # -----------------------------------------------------------------------------------
 # ----------------------------------------------------------------------------------- 
@@ -320,7 +333,7 @@ if __name__ == "__main__":
         mode = "build",
         start_date="2000-01-01", 
         end_date="2020-12-31",
-        resolution = 3000,
+        resolution = 2500,
         lat_bounds = (45.4, 49.1),
         lon_bounds = (-124.8, -117.0),
     )

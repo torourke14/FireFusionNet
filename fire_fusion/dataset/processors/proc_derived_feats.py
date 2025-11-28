@@ -1,4 +1,5 @@
 from typing import List
+import pandas as pd
 import xarray as xr
 import numpy as np
 from scipy.ndimage import maximum_filter
@@ -143,17 +144,40 @@ class DerivedProcessor:
         ffwi.name = name
         return ffwi
         
-    def build_doy_sin(self, subds: xr.Dataset, name: str) -> xr.DataArray:
-        t = subds["time"].dt.dayofyear.astype("float32")
-        days = 365.0
+    def build_doy_sin(self, subds: xr.Dataset, name: str, gridref: xr.DataArray) -> xr.DataArray:
+        """ NOTE: Used LLM for help debugging this function"""
 
-        theta = 2 * np.pi * (t / days) # 2pi/r
+        # 1. Get time index from the dataset
+        time_index = pd.DatetimeIndex(subds.indexes["time"])   # shape: (T,)
+
+        # 2. Day-of-year as plain numpy array
+        doy = time_index.dayofyear.to_numpy(dtype="float32")
+
+        # 3. Sine encoding on [0, 2π)
+        phase = 2.0 * np.pi * (doy - 1.0) / 365.0              # shape: (T,)
+        time_signal = np.sin(phase).astype("float32")          # shape: (T,)
+
+        # 4. Broadcast over spatial grid
+        ny = gridref.sizes["y"]
+        nx = gridref.sizes["x"]
+
+        data = np.broadcast_to(
+            time_signal[:, None, None],                        # (T,1,1) → (T,ny,nx)
+            (len(time_index), ny, nx),
+        ).astype("float32")
+
+        # 5. Wrap as DataArray with (time, y, x)
         doy_sin = xr.DataArray(
-            data = np.sin(theta.values)[:, None, None],
-            dims = ("time", "y", "x"),
-            coords = {"time":subds["time"], "y":subds["y"], "x":subds["x"] },
-            name = name
+            data=data,
+            dims=("time", "y", "x"),
+            coords={
+                "time": time_index,
+                "y": gridref["y"].values,
+                "x": gridref["x"].values,
+            },
+            name=name,
         )
+
         return doy_sin
     
     # def build_wui(self,

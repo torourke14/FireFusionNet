@@ -11,7 +11,7 @@ def create_coordinate_grid(
     lat_bounds = (45.4, 49.1),
     lon_bounds = (-124.8, -117.0),
     crs = "EPSG:32610" # UT Zone 10N (better for single state)
-):
+) -> xr.DataArray:
     """
     Defines coordinate grid to place features on top of
     - subclasses xarray.DataArray

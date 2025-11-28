@@ -3,6 +3,7 @@ from multiprocessing import AuthenticationError
 from pathlib import Path
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import numpy as np
 import xarray as xr
 import pandas as pd
 from datetime import datetime, timedelta
@@ -44,19 +45,19 @@ class Modis(Processor):
     
         with ThreadPoolExecutor(max_workers=self.max_parallel_req) as executor:
             if f_cfg.key == "MOD13Q1":
-                print("[LAADS] Purchasing satellite to collect more data...")
+                print("[LAADS] Purchasing satellite to collect more vegetation data...")
                 requests = {
                     executor.submit(self._fetch_ndvi, f_cfg, yr): yr 
                     for yr in self.gridref.attrs['years']
                 }
             elif f_cfg.key == "MCD15A2H":
-                print(f"[LAADS] Waiting patiently for satellite to arrive")
+                print(f"[LAADS] Checking how big the leaves are")
                 requests = {
                     executor.submit(self._fetch_lai, f_cfg, yr): yr 
                     for yr in self.gridref.attrs['years']
                 }
             elif f_cfg.key == "MCD64A1":
-                print(f"[LAADS] This thing is awesome!")
+                print(f"[LAADS] Staring at the shiny objects")
                 requests = {
                     executor.submit(self._fetch_burns, f_cfg, yr): yr 
                     for yr in self.gridref.attrs['years']
@@ -113,10 +114,6 @@ class Modis(Processor):
                 arr = self._preclip_native_dataset(raw)
                 arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
-                """ -----------------------------------------------------------------------------------
-                    NOTE: CHATGPT helped with bitparsing below
-                        THESE WERE REALLY DIFFICULT TO FIGURE OUT!!
-                ----------------------------------------------------------------------------------- """
                 ndvi = arr["250m 16 days NDVI"].astype('float32')
                 qa = arr["250m 16 days VI Quality"].fillna(0).astype("uint16")
 
@@ -126,21 +123,14 @@ class Modis(Processor):
                 ndvi = ndvi.where(ndvi != fill_val)
 
                 # --- QA decoding ---
-                ndvi_quality = qa & 0b11                  # bits 0-1
-                
-                vi_useful    = (qa >> 2) & 0b1111         # bits 2-5
-                adj_cloud    = (qa >> 8) & 0b1            # bit 8
-                mixed_cloud  = (qa >> 10) & 0b1           # bit 10
-                land_water   = (qa >> 11) & 0b111         # bits 11-13
+                quality      = (qa & 0b11) <= 1
+                vi_useful    = ((qa >> 2) & 0b1111) < 13
+                no_adj_cloud = ((qa >> 8) & 0b1) == 0
+                no_mixed_cloud = ((qa >> 10) & 0b1) == 0
+                land_water   = ((qa >> 11) & 0b111).isin([1, 2])
 
-                good_quality   = ndvi_quality <= 1        # keep 00, 01
-                good_useful    = vi_useful < 13           # exclude "not useful" / invalid
-                no_adj_cloud   = adj_cloud == 0
-                no_mixed_cloud = mixed_cloud == 0
-                land_mask      = land_water.isin([1, 2])  # land + coastlines
-
-                ndvi = ndvi.where(good_quality & good_useful & no_adj_cloud & no_mixed_cloud & land_mask)
-                """ ------------------------------------------------------------------------------- """
+                ndvi = ndvi.where(quality & vi_useful & no_adj_cloud & land_water)
+                ndvi = ndvi * 1.0e-4
 
             ndvi = ndvi.expand_dims(time=[ts])
             year_data.append(ndvi)
@@ -168,34 +158,33 @@ class Modis(Processor):
                 arr = self._preclip_native_dataset(raw)
                 arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
-                """ -----------------------------------------------------------------------------------
-                    NOTE: BELOW BIT PARSING DONE (mostly) BY CHATGPT; 
-                        THESE WERE REALLY DIFFICULT TO FIGURE OUT!!
-                ----------------------------------------------------------------------------------- """
                 lai  = arr["Lai_500m"].fillna(0).astype("float32")
                 qc   = arr["FparLai_QC"].fillna(0).astype("uint8")
                 qcx  = arr["FparExtra_QC"].fillna(0).astype("uint8")
 
-                # Drop fill + non-terrestrial codes (249–255)
-                lai = lai.where((lai >= 0) & (lai <= 100))
+                # Primary QC (FParLai_QC)
+                modland_gq = (qc & 0b1) == 0
+                clouds_npres = ((qc >> 3) & 0b11).isin([0, 3])
+                confident       = ((qc >> 5) & 0b111) < 4
 
-                # Primary QC (FparLai_QC)
-                modland_good = (qc & 0b1) == 0               # bit 0 == 0
-                cloudstate   = (qc >> 3) & 0b11              # bits 3–4
-                scf_qc       = (qc >> 5) & 0b111             # bits 5–7
-                clouds_ok   = cloudstate.isin([0, 3])        # clear / assumed clear
-                retrieval_ok = scf_qc < 4                    # exclude "not produced"
-
-                landsea   = qcx & 0b11                       # bits 0–1
-                snow_ice  = (qcx >> 2) & 0b1                 # bit 2
-                int_cloud = (qcx >> 5) & 0b1                 # bit 5
-                shadow    = (qcx >> 6) & 0b1                 # bit 6
-                land_ok   = landsea.isin([0, 1])             # land + shore
-                no_snow   = snow_ice == 0
+                # ExtraWC (FparExtra_QC)
+                island   = (qcx & 0b11).isin([0, 1])
+                not_snow  = ((qcx >> 2) & 0b1) == 0
+                
+                aerosol   = (qcx >> 3) & 0b1
+                cirrus    = (qcx >> 4) & 0b1
+                int_cloud = (qcx >> 5) & 0b1
+                shadow    = (qcx >> 6) & 0b1
+                atm_good  = (aerosol == 0) & (cirrus == 0)
                 no_clouds = (int_cloud == 0) & (shadow == 0)
 
-                lai: xr.DataArray = lai.where(modland_good & clouds_ok & retrieval_ok & land_ok & no_snow & no_clouds)
-                """ ------------------------------------------------------------------------------- """
+                lai: xr.DataArray = lai.where(
+                    modland_gq & clouds_npres & confident & 
+                    island & not_snow & no_clouds & atm_good
+                )
+
+                # Drop fill cal 255 and non-terrestrial 249
+                lai = lai.where((lai >= 0) & (lai <= 100))
 
             lai = lai.expand_dims(time=[ts])
             year_data.append(lai)
@@ -210,7 +199,7 @@ class Modis(Processor):
         if len(nc_files) == 0:
             return None
         
-        year_data: List[xr.DataArray] = []
+        burn_doys: xr.DataArray | None = None
         for fp in nc_files:
             ts = pd.Timestamp(self._parse_date(str(fp.name)))
             print(f"[LAADS] Parsing {fp.stem} --> {ts}")
@@ -222,28 +211,42 @@ class Modis(Processor):
                 arr = self._preclip_native_dataset(raw)
                 arr = self._reproject_dataset_to_mgrid(arr, f_cfg.resampling)
 
-                """ -----------------------------------------------------------------------------------
-                    NOTE: BELOW BIT PARSING DONE (mostly) BY CHATGPT; 
-                        THESE WERE REALLY DIFFICULT TO FIGURE OUT!!
-                ----------------------------------------------------------------------------------- """
                 burn = arr["Burn Date"].fillna(-1).astype("int16")
                 qa   = arr["QA"].fillna(0).astype("uint8")
+
+                # QA
+                land_valid = ((qa & 0b11) == 0b11) # bits 1/2 = 1
+                burn = burn.where(land_valid)
+                burn = burn.where((burn >= 1) & (burn <= 366)) # -1/-2 = bad val
                 
-                burn = burn.where(burn >= 0)      # drop -1, -2
-                is_land  = (qa & 0b1) == 1        # bit 0
-                is_valid = ((qa >> 1) & 0b1) == 1 # bit 1
+                # keep existing value (earlier in the year), fill only where NaN
+                if burn_doys is None:
+                    burn_doys = burn
+                else:
+                    burn_doys = xr.where(burn_doys.notnull(), burn_doys, burn)
 
-                burn = burn.where(is_land & is_valid)
-                burn_mask = (burn > 0).astype("float32")
-                """ ------------------------------------------------------------------------------- """
+        if burn_doys is None:
+            return None
+        
+        """ NOTE: ChatGPT helped synthesize dates here """
+        time_index = pd.date_range(
+            datetime(year, 1, 1), datetime(year, 12, 31),
+            freq="D"
+        )
+        
+        doy_axis = xr.DataArray(
+            np.arange(1, len(time_index) + 1, dtype="int16"),
+            coords={ "time":time_index },
+            dims=("time",)
+        )
 
-            burn_mask = burn_mask.expand_dims(time=[ts])
-            year_data.append(burn_mask)
+        # Broadcast to (time, y, x)
+        doy_axis_3d, burn_doy_3d = xr.broadcast(doy_axis, burn_doys)
+        burn_daily = (burn_doy_3d == doy_axis_3d).astype("float32")
+        burn_daily.name = f_cfg.name
 
-        stacked = xr.concat(year_data, dim="time").sortby("time")
-        stacked = stacked.groupby("time").max("time")
-        return stacked.to_dataset(name=f_cfg.name)
-
+        return burn_daily.to_dataset(name=f_cfg.name)
+        """ --------------------------------------------------------------"""
 
     # ----------------------------------------------------------------------
     # Fetching
@@ -276,7 +279,7 @@ class Modis(Processor):
         product_folder = MODIS_DIR / f"{short_name}.{year}"
         ex_files = list(product_folder.glob("*.hdf"))
 
-        if ex_files and all([f.name.startswith(f"{short_name}.A{year}") for f in ex_files]):
+        if ex_files and all([True for f in ex_files if f.name.startswith(f"{short_name}")]):
             print(f"[LAADS] {short_name} Found my yearbook from {year}, DAMN I look good..")
             return ex_files
         
