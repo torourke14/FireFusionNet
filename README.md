@@ -1,19 +1,19 @@
 # FireFusion
-Novel CNN/Transformer mixture neural model that computes risk of wildfire ignition in WA state. Aggregates data from multiple public datasets/APIs to build and train on a rasterized feature matrix.
+A Spatio-Temporal ConvFormer neural model utilizing to detect ignition & cause of wildfire ignition in WA state, utilizing public datasets only.
 
-- `python -m fire_fusion.dataset.build.py`: Builds model-ready feature set from downloaded data (Given proper download scheme)
-- `python -m fire_fusion.train.py`: Uses built .zarr file tensor to train the model
+- `python -m fire_fusion.dataset.build`: Builds model-ready feature/label sets from downloaded data (See data/README.md for reproducing)
+- `python -m fire_fusion.train`: Uses built .zarr file tensor to train the model
 
 ### Data Sources
-- **Climatology**: Landfire, National Landcover Database (NLCD), Gridded Population of the World (GPWv4), MCD15A2H, MOD13Q1, gridMET (Climatology Lab)
-- **Fire labeling**: MCD64A1 (NASA, burndDate/severity), USFS Fire Occurence Point FL (burn date/causes), USFS Fire PL (burn perimeter)
+- **Climatology**: Landfire, National Landcover Database (NLCD), Gridded Population of the World (GPWv4), MCD15A2H (NASA LAADS), MOD13Q1 (NASA LAADS), gridMET (Climatology Lab)
+- **Fire labeling**: MCD64A1 (NASA LAADS), USFS Fire Occurence Point and Fire Perimeter Layers
 See *data/sources/READ_ME.md* and *FeatureOverview.xlsx* for data point usage
 
 ### Model
 - Spatial CNN Encoder (ResNet MLP)
-- Sequence of self-attention blocks targeting (1) generalized spatial windows -> (2) feature channels -> and (3) -> temporal aspects
-- Upsampling decoder to predict if *cell(i, j)* transitions to ignition (5% burn threshold) at *(t, t+K-1)*. Actively burning cells are masked to prevent model lookahead.
-- Trained on 2km x 2km grid cells w/Binary-cross entropy loss
+- Sequence of dedicated SA Transformers targeting (1) spatial (2) feature, and (3) temporal relationships.
+- Upsampling decoder predicts probability *cell(i, j, t)* transitions to "ignition" at *(i, j, t + K - 1)*.
+- Provides strict masking of water features, active fires, and active fire causes to focus loss on real-time priors.
 
 ### Citation
 TBD!

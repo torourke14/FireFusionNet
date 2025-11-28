@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os
-from typing import Dict, Literal
+from typing import Dict, List, Literal
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,7 @@ from numcodecs import Blosc
 from .data_loader import FireDataset
 from .grid import create_coordinate_grid
 from fire_fusion.config.path_config import TRAIN_DATA_DIR, EVAL_DATA_DIR, TEST_DATA_DIR
-from fire_fusion.config.feature_config import Feature, base_feat_config
+from fire_fusion.config.feature_config import Feature, base_feat_config, drv_feat_config
 
 from .processors.processor import Processor
 from .processors.proc_derived_feats import DerivedProcessor
@@ -59,19 +59,9 @@ class FeatureGrid:
         lon_bounds = (-124.8, -117.0),
     ):
         self.fconfig = base_feat_config()
-
-        self.base_features_dict = {
-            f.name: f
-            for k, features in self.fconfig.items() for f in features
-            if k not in ["DERIVED", "LABELS", "MASKS"]
-        }
-        self.all_features_dict = {
-            f.name: f
-            for k, features in self.fconfig.items() for f in features
-            if k not in ["LABELS", "MASKS"]
-        }
-        self.label_names = [ l.name for l in self.fconfig["LABELS"]]
-        self.mask_names = [ l.name for l in self.fconfig["MASKS"]]
+        self.drv_config = drv_feat_config()
+        self.label_names = [ l.name for l in self.drv_config if l.is_label==True]
+        self.mask_names = [ m.name for m in self.drv_config if m.is_mask==True]
 
         if mode == "load":
             self.load_features(batch_size, device, num_workers, pin_memory)
@@ -87,28 +77,24 @@ class FeatureGrid:
             print(f"- y-coordinates: ({self.grid.attrs['y_min']:.5f}, {self.grid.attrs['y_min']:.5f})")
             print(f"- x-coordinates: ({self.grid.attrs['x_min']:.5f}, {self.grid.attrs['x_max']:.5f})")
 
-            self.master_ds = xr.Dataset(
-                coords={
-                    "time": self.grid.attrs['time_index'],
-                    "y": self.grid.attrs['y_coordinates'],
-                    "x": self.grid.attrs['x_coordinates']
-                }
-            )
             self.processors: Dict[str, Processor] = {
                 pname: PROC_CLASSES[pname](features, self.grid)
                 for pname, features in self.fconfig.items()
-                if pname not in ["DERIVED", "LABELS", "MASKS"]
             }
-            
+            self.drv_processor = DerivedProcessor()
             self.build_features()
 
     # ------------------------------------------------------------------------------------
     
-    def _mask_nan(self):
-        data = self.master_ds.to_array("channel")
-        nan_mask = xr.apply_ufunc(np.isfinite, data).all(dim="channel")
+    def _apply_mask_nan(self):
+        nan_mask = (xr.apply_ufunc(
+            np.isfinite, 
+            self.master_ds.to_array("channel")
+        ).all(dim="channel"))
         
-        self.master_ds["nan_mask"] = nan_mask
+        self.master_ds = self.master_ds.assign({
+            "nan_mask": nan_mask
+        })
 
         for var in self.master_ds.data_vars:
             if var in self.label_names or var in self.mask_names or var == "nan_mask":
@@ -120,21 +106,26 @@ class FeatureGrid:
 
         return self.master_ds
     
-    def _normalize(self):
+
+    def _apply_normalize(self):
         for f in self.master_ds.data_vars:
             if f in self.mask_names or f in self.label_names:
                 continue
-
+            
+            # find config
             feature = self.master_ds[f]
-            f_config = self.all_features_dict.get(str(f))
-
+            f_config = f_config = next((cfg
+                for key, feature_list in self.fconfig.items() if key not in ("LABELS", "MASKS")
+                for cfg in feature_list if cfg.name == f
+            ), None)
             if f_config is None:
                 print(f"can't find feature")
                 continue
+
             print(f"[FeatureGrid] normalizing {f_config.name}")
 
             clip = getattr(f_config, "ds_clip", None)
-            norms = getattr(f_config, "ds_norms", [])
+            norms = getattr(f_config, "ds_norms", None)
 
             ff = feature.where(np.isfinite(feature))
             f_mean = float(ff.mean(dim=ff.dims, skipna=True))
@@ -142,26 +133,44 @@ class FeatureGrid:
             f_min = float(ff.min(dim=ff.dims, skipna=True))
             f_max = float(ff.max(dim=ff.dims, skipna=True))
 
-            if clip:
+            if clip is not None:
                 feature = feature.clip(clip[0], clip[1])
-            for ntype in norms:
-                if ntype == "z_score":
-                    feature = (feature - f_mean) / (f_std if f_std > 0 else 1.0)
-                elif ntype == "minmax":
-                    denom = abs(f_max - f_min)
-                    feature = (feature - f_min) / (denom if denom > 0.0 else 1.0)
-                elif ntype == "log1p":
-                    feature = xr.apply_ufunc(np.log1p, feature)
-                elif ntype == "to_sin":
-                    feature = xr.apply_ufunc(np.sin, feature)
-                elif ntype == "scale_max":
-                    feature = feature / (f_max if f_max != 0 else 1.0)
+            if norms is not None:
+                for ntype in norms:
+                    if ntype == "z_score":
+                        feature = (feature - f_mean) / (f_std if f_std > 0 else 1.0)
+                    elif ntype == "minmax":
+                        denom = abs(f_max - f_min)
+                        feature = (feature - f_min) / (denom if denom > 0.0 else 1.0)
+                    elif ntype == "log1p":
+                        feature = xr.apply_ufunc(np.log1p, feature)
+                    elif ntype == "to_sin":
+                        feature = xr.apply_ufunc(np.sin, feature)
+                    elif ntype == "scale_max":
+                        feature = feature / (f_max if f_max != 0 else 1.0)
 
             self.master_ds[f] = feature
 
+
+    def _apply_derived(self):
+        for cfg in self.drv_config:
+            func   = cfg.func
+            inputs = cfg.inputs
+            drop_inputs = cfg.drop_inputs
+
+            if func:
+                drv_fn = getattr(self.drv_processor, func)
+                sub = self.master_ds[inputs]
+                out = drv_fn(subds=sub, name=cfg.name)
+
+            self.master_ds[out.name] = out
+            # self.master_ds = self.master_ds.merge(out)
+
+            if inputs is not None and drop_inputs is not None:
+                self.master_ds = self.master_ds.drop_vars(inputs)
+
     
-    
-    def _save_splits_zarr(self, split=(0.6, 0.2, 0.2)):
+    def _save_splits_to_zarr(self, split=(0.6, 0.2, 0.2)):
         print("Spraying neutrino stabilization goo in sub-basement level 7...")
 
         assert (sum(split) - 1.0) < 1e-6, f"splits must equal 1.0"
@@ -198,9 +207,10 @@ class FeatureGrid:
         )
 
         
-
     def build_features(self):
         print("Warming up GPU using low-emission wildfire simulations...")
+        layers: List[xr.Dataset] = []
+
         for src, processor in self.processors.items():
             features: list[Feature] = processor.cfg
 
@@ -209,31 +219,27 @@ class FeatureGrid:
                 try:
                     layer = processor.build_feature(config)
                 except Exception as e:
-                    print(f"Oh no! {src} processor failed: {e}")
+                    print(f"Oh no! feature extraction failed for {config.name}: ", e)
                     return
-                try:
-                    self.master_ds = xr.merge([self.master_ds, layer], join="outer")
-                except Exception as e:
-                    print(f"Oh no! {src} merging features failed: {e}")
-                    return
-                    
-        # --- ADD DERIVED FEATURES AND LABELS
+                layers.append(layer)
+
         print(f"[FeatureGrid] Finished extracting features! ")
-        
-        drv_processor = DerivedProcessor(
-            self.fconfig["DERIVED"], self.fconfig["LABELS"], self.fconfig["MASKS"],
-            self.grid
-        )
+        del self.processors, self.grid, self.time_index
+        try:
+            self.master_ds: xr.Dataset = xr.merge(layers, join="outer")
+        except Exception as e:
+            print(f"Oh no! merging failed for {config.name}: ", e)
+            return
+        del layers
 
+
+        # --- DERIVED FEATURES AND LABELS
         print(f"[FeatureGrid] Deriving anti-arson techniques through feature derivation..")
-        self.master_ds, _, _ = drv_processor.derive_features(self.master_ds)
+        # self.master_ds = self.master_ds.chunk({"time": 30, "y": 145, "x": 107})
+        self._apply_derived()
 
-        # drop derivative features (not needed anymore)
-        print(f"[FeatureGrid] Reversing polarity of the of the anti-polarity reverser...")
-        drop_names = [cfg.name for cfg in self.base_features_dict.values() if cfg.drop == True]
-        self.master_ds = self.master_ds.drop_vars(drop_names)
-
-        # # sanity crop
+        # --- sanity crop
+        print(f"[FeatureGrid] Cuttin' da cheese..")
         for var in self.master_ds.data_vars:
             da = self.master_ds[var]
             if "x" in da.dims and "y" in da.dims:
@@ -241,14 +247,14 @@ class FeatureGrid:
                             y=slice(self.grid.attrs['y_min'], self.grid.attrs['y_max']))
                 self.master_ds[var] = da
 
-        print(f"[FeatureGrid] Baking some cookies...")
+
+        # --- mask >> normalize >> save to .zarr
+        print(f"[FeatureGrid] Reversing polarity of the of the anti-polarity reverser...")
         print(f"[FeatureGrid] Baking some muffins...")
-
-        self.master_ds = self._mask_nan()
-        self._normalize()
-        self._save_splits_zarr()
-
-        print(f"Saved splits to .zarrs.")
+        self._apply_mask_nan()
+        self._apply_normalize()
+        self._save_splits_to_zarr()
+        print(f"Saved splits to .zarrs <3")
 
 
     def load_features(self, batch_size, device, num_workers, pin_memory):
@@ -309,13 +315,12 @@ class FeatureGrid:
 # -----------------------------------------------------------------------------------
 # ----------------------------------------------------------------------------------- 
 
-
 if __name__ == "__main__":
     feature_dataset = FeatureGrid(
         mode = "build",
         start_date="2000-01-01", 
         end_date="2020-12-31",
-        resolution = 4000,
+        resolution = 3000,
         lat_bounds = (45.4, 49.1),
         lon_bounds = (-124.8, -117.0),
     )

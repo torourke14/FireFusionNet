@@ -68,18 +68,16 @@ class Modis(Processor):
                     yr_ds = req.result()
                     if yr_ds is None:
                         continue
-                    
                     feature_by_yr = xr.merge([ feature_by_yr, yr_ds ], join="outer")
 
                 except Exception as e:
                     print(f"[LAADS] Satellite tried to load data for {yr}, epic fail! --> {e}\n\n")
 
         # -----------------------------------------------------------------------
-
-        feature_by_yr = feature_by_yr.sortby("time")
-        feature_by_yr = self._time_interpolate(feature_by_yr, f_cfg.time_interp)
-        feature_by_yr = feature_by_yr.transpose("time", "y", "x", ...)
-        return feature_by_yr
+        return self._time_interpolate(
+            feature_by_yr.sortby("time"), 
+            f_cfg.time_interp
+        ).transpose("time", "y", "x", ...)
     
 
     def _parse_date(self, filename):

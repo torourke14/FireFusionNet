@@ -98,14 +98,13 @@ def load_as_xarr(
 
         # gridMET, ESA_CCI, 
         elif suffix == ".nc":
-            if variable is None:
-                raise ValueError("[LOAD_AS_XARR] expects variable for .nc files")
-
             ds = xr.open_dataset(file, 
                 engine="netcdf4", 
                 decode_coords="all",
                 decode_times=True
             )
+            if variable is None:
+                raise ValueError(f"[LOAD_AS_XARR] expects variable. Options are: {list(ds.data_vars.keys())}")
             if variable not in ds:
                 raise KeyError(f"{variable} not in dataset. Available: {list(ds.data_vars.keys())}")
             darr = ds[variable]

@@ -17,9 +17,7 @@ class DerivedProcessor:
         self.gridref = mgrid
 
         
-    def derive_features(self, ds: xr.Dataset, 
-        sp_burn_kernel = 3, sp_burn_window = 3
-    ) -> Tuple[xr.Dataset, xr.DataArray, xr.DataArray]:
+    def derive_features(self, ds: xr.Dataset) -> xr.Dataset:
         """
             label: fire_new_tplus1 : burning at t+1 AND not burning at t
                 # if model is having trouble learning fire last 7 + wind direction
@@ -51,7 +49,12 @@ class DerivedProcessor:
 
             try:
                 if deriv_feat.key == "fire_spatial_roll":
-                    burn_spatial_rolling = self._compute_fire_spatial_recent(burning_t, sp_burn_kernel, sp_burn_window, name)
+                    burn_spatial_rolling = self._compute_fire_spatial_recent(
+                        burning_t, 
+                        spatial_kernel_size=3,
+                        spatial_window_size=3,
+                        name=name
+                    )
                     ds = ds.assign({ name: burn_spatial_rolling })
 
                 elif deriv_feat.key == "precip_2d": 
@@ -75,7 +78,7 @@ class DerivedProcessor:
                     ds = ds.assign({ name: ndvi_anom })
 
                 elif deriv_feat.key == "ffwi": 
-                    fosberg_fwi = self._compute_fosberg_fwi(Tf=ds['temp_avg'], sH=ds['rh_pct'], Ws=ds['wind_mph'])
+                    fosberg_fwi = self._compute_fosberg_fwi(Tf=ds['temp_avg'], sH=ds['rhumidity_pct'], Ws=ds['wind_mph'])
                     ds = ds.assign({ name: fosberg_fwi })
 
                 elif deriv_feat.key == "doy_sin":
@@ -87,7 +90,7 @@ class DerivedProcessor:
                 print(f"Feature extraction for {name} failed: ", e)
                 continue
 
-        return ds, burn_loss_mask, ds['water_mask']
+        return ds
 
     def _ignition_next(self, burning_t: xr.DataArray, burning_tp1: xr.DataArray):
         ignition_next_label = xr.DataArray(
@@ -167,26 +170,26 @@ class DerivedProcessor:
         return ffwi
     
 
-    def _compute_wui(self,
-        pop_norm: xr.DataArray, 
-        lcov_class: xr.DataArray,
-        wildland_ixs = [4, 5, 7]
-    ) -> xr.DataArray:
-        """
-            WUI = 1 if any wildlife class
-        """
-        wild_ohe = lcov_class[..., list(wildland_ixs)]
+    # def _compute_wui(self,
+    #     pop_norm: xr.DataArray, 
+    #     lcov_class: xr.DataArray,
+    #     wildland_ixs = [4, 5, 7]
+    # ) -> xr.DataArray:
+    #     """
+    #         WUI = 1 if any wildlife class
+    #     """
+    #     wild_ohe = lcov_class[..., list(wildland_ixs)]
 
-        # Reduce over the ohe to get a [0, 1] wildland value on 2d grid
-        wildland_mask = wild_ohe.max(dim="lc_class_index")  
+    #     # Reduce over the ohe to get a [0, 1] wildland value on 2d grid
+    #     wildland_mask = wild_ohe.max(dim="lc_class_index")  
 
-        # population is HEAVILY skewed towards cities
-        # add sigmoid to norm'd population to further smooth out non-linearity
-        # smoothed WUI as sigmopoid of norm'd population * wildland mask
+    #     # population is HEAVILY skewed towards cities
+    #     # add sigmoid to norm'd population to further smooth out non-linearity
+    #     # smoothed WUI as sigmopoid of norm'd population * wildland mask
 
-        wui_smooth = wildland_mask * (1.0 / (1.0 + np.exp(-1.0 * pop_norm)))
-        wui_smooth.name = "wui_smooth"
-        return wui_smooth
+    #     wui_smooth = wildland_mask * (1.0 / (1.0 + np.exp(-1.0 * pop_norm)))
+    #     wui_smooth.name = "wui_smooth"
+    #     return wui_smooth
         
     
     
