@@ -2,38 +2,43 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 import pandas as pd
-
+import numpy as np
 from torch.utils.data import DataLoader
-from torch.nn import CrossEntropyLoss
 from torch.amp.autocast_mode import autocast
 
 from typing import Literal, Tuple, Dict
 from tqdm import tqdm
 from time import perf_counter
+import matplotlib.pyplot as plt
 
-from .utils.metrics import ConfusionMatrix, Accuracy
+from .utils.plots import plot_class_accuracy, plot_loss_curves, plot_rates_per_epoch
 
-from .model.model import FireFusionModel
 from .dataset.build import FeatureGrid
+from .model.model import FireFusionModel
+from .utils.metrics import ConfusionMatrix, Accuracy, MetricsManager
 from .utils.utils import estimate_model_size_mb, set_global_seed, get_device_config, save_model
 from .utils.utils import WarmupCosineAnnealingLR
+from .config.path_config import ARTIFACTS_DIR
 
 
 class WRMTrainer:
-    def __init__(self,
+    def __init__(self, mode: Literal['train', 'test'],
         train_loader: DataLoader,
         val_loader: DataLoader,
+        ign_pos_weight,
         device: torch.device,
         model_params: Dict,
-        epochs: Tuple[int, int, int], # (warmup, total, early stop patience)
-        lrs: Tuple[float, float], # (min, base after warmup)
+        epochs: Tuple[int, int, int],
+        lrs: Tuple[float, float],
         weight_decay: float,
         grad_clip: float,
         debug: bool,
-        acc_goal = 0.5
+        acc_goal = 0.7
     ):
         self.device = device;
         self.use_amp = bool(device.type == "cuda")
+
+        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
         self.train_loader = train_loader;
         self.val_loader = val_loader
@@ -47,26 +52,24 @@ class WRMTrainer:
             out_size=mp['out_size'],
         ).to(self.device)
 
-        self.bcewl_loss = nn.BCEWithLogitsLoss(reduction="none")
+        self.ign_pos_weight = ign_pos_weight.to(device)
+        self.bcewl_loss = nn.BCEWithLogitsLoss(reduction="none", pos_weight=self.ign_pos_weight)
 
         self.ep_warmup, self.ep_max, self.ep_early_stop = epochs
         self.min_lr, self.base_lr = lrs
         self.weight_decay = weight_decay
         self.grad_clip = grad_clip
         self.debug = debug
-        self.metrics = { 
-            'ign': Accuracy(id='ign'),
-            'ign_cause': Accuracy(id='cause'),
-            'ign_matrix': ConfusionMatrix(num_classes=2)
-        }
+
+        self.mm = MetricsManager(num_classes=(2, 3))
+
+        if mode == "train": self.train()
+        else: self.test()
 
     def _compute_loss(self,
-        # outputs: Tuple, # multi-class, don't specify # classes
-        ign_logits: torch.Tensor, # (B, 1, H, W)
-        ign_golds: torch.Tensor, # (B, 1, H, W)
-        cause_logits: torch.Tensor, # (B, num_classes, H, W)
-        cause_golds: torch.Tensor, # (B, H, W)
-        # masks
+        ign_logits: torch.Tensor, ign_golds: torch.Tensor,  # both (B, 1, H, W)
+        cause_logits: torch.Tensor,                         # (B, num_classes, H, W)
+        cause_golds: torch.Tensor,                          # (B, H, W)
         act_fire_mask: torch.Tensor,
         water_mask: torch.Tensor,
         alpha_ign: float = 1.0,
@@ -82,7 +85,8 @@ class WRMTrainer:
         ign_logits_flat = ign_logits.squeeze(1)
         ign_targets = ign_golds.float()
         ign_loss = self.bcewl_loss(
-            ign_logits_flat, ign_targets
+            ign_logits_flat,
+            ign_targets
         )
 
         masked_ign_loss = ign_loss * ign_mask
@@ -106,10 +110,10 @@ class WRMTrainer:
 
     def train_epoch(self):
         self.model.train()
-        ep_total_loss = 0.0
-        ep_ign_loss = 0.0
-        ep_cause_loss = 0.0
-        n_samples = 0
+        ep_total_loss: float = 0.0
+        ep_ign_loss: float = 0.0
+        ep_cause_loss: float = 0.0
+        n_samples: int = 0
         
         for features, golds, masks in tqdm(self.train_loader, desc="Training...", leave=False):
             features = features.to(self.device)
@@ -117,9 +121,8 @@ class WRMTrainer:
             masks = { k: v.to(self.device) for k, v in masks.items() }
             
             self.optimizer.zero_grad(set_to_none=True)
-            lr_used = self.optimizer.param_groups[0]["lr"]
+            # lr_used = self.optimizer.param_groups[0]["lr"]
 
-            # Run model
             with autocast(device_type=self.device.type, enabled=self.use_amp):
                 ign_logits, cause_logits = self.model(features)         # (B, 1, H, W), (B, num_classes, H, W)
                 ign_golds = golds["ign_next"]
@@ -135,6 +138,10 @@ class WRMTrainer:
             ep_ign_loss += ign_loss.item()
             ep_cause_loss += cause_loss.item()
             n_samples += golds["ign_next"].size(0)
+            self.mm.add('val', 
+                [ign_logits.detach().cpu(), cause_logits.detach().cpu()],
+                [ign_golds.detach().cpu(), cause_golds.detach().cpu()]
+            )
 
             # Backpropogate -> clip gradients -> step optimizer -> step optimizer
             tot_loss.backward()
@@ -142,18 +149,14 @@ class WRMTrainer:
             self.optimizer.step()
             self.scheduler.step()
 
-        mean_tot_loss = ep_total_loss / n_samples
-        mean_ign_loss = ep_ign_loss / n_samples
-        mean_cause_loss = ep_cause_loss / n_samples
+        self.mm.add_epoch_totals("train", losses=np.array([ep_total_loss, ep_ign_loss, ep_cause_loss]))
 
-        return mean_tot_loss, mean_ign_loss, mean_cause_loss, lr_used
-    
     def eval_epoch(self, calibration = False):
         self.model.eval()
-        ep_total_loss = 0.0
-        ep_ign_loss = 0.0
-        ep_cause_loss = 0.0
-        n_samples = 0
+        ep_total_loss: float = 0.0
+        ep_ign_loss: float = 0.0
+        ep_cause_loss: float = 0.0
+        n_samples: int = 0
 
         ign_logits_record = []
         ign_labels_record = []
@@ -164,7 +167,6 @@ class WRMTrainer:
                 golds = { k: v.to(self.device) for k, v in golds.items() }
                 masks = { k: v.to(self.device) for k, v in masks.items() }
                 
-                # Run model
                 with autocast(device_type=self.device.type, enabled=self.use_amp):
                     ign_logits, cause_logits = self.model(features)
                     ign_golds = golds["ign_next"]
@@ -181,34 +183,23 @@ class WRMTrainer:
                 ep_cause_loss += cause_loss.item()
                 n_samples += golds["ign_next"].size(0)
 
-                if calibration:
-                    # same as in loss function
-                    ign_mask_flat = (masks["water_mask"] == 1) & (masks["act_fire_mask"] == 1).bool()
-                    # record flattened masked logits to record
-                    ign_logits_flat_masked = ign_logits.squeeze(1)[ign_mask_flat]
-                    ign_labels_flat_masked = ign_golds.squeeze(1)[ign_mask_flat]
-                    ign_logits_record.append(ign_logits_flat_masked.detach().cpu())
-                    ign_labels_record.append(ign_labels_flat_masked.detach().cpu())
+                # same as in loss function
+                ign_mask_flat = (masks["water_mask"] == 1) & (masks["act_fire_mask"] == 1).bool()
+                # record flattened masked logits to record
+                ign_logits_flat_masked = ign_logits.squeeze(1)[ign_mask_flat]
+                ign_labels_flat_masked = ign_golds.squeeze(1)[ign_mask_flat]
+                ign_logits_record.append(ign_logits_flat_masked.detach().cpu())
+                ign_labels_record.append(ign_labels_flat_masked.detach().cpu())
                 
-                # log metrics
-                self.metrics['ign'].compute_step(ign_logits.detach().cpu(), ign_golds.detach().cpu())
-                self.metrics['ign_cause'].compute_step(cause_logits.detach().cpu(), cause_golds.detach().cpu())
-                self.metrics['ign_matrix'].compute_step(ign_logits.detach().cpu(), ign_golds.detach().cpu())
+                self.mm.add('val', [ign_logits.detach().cpu()], [ign_golds.detach().cpu()])
 
-        mean_tot_loss = ep_total_loss / n_samples
-        mean_ign_loss = ep_ign_loss / n_samples
-        mean_cause_loss = ep_cause_loss / n_samples
+        self.mm.add_epoch_totals("val", np.array([ep_total_loss, ep_ign_loss, ep_cause_loss]))
 
         if calibration and ign_logits_record:
             all_logits = torch.cat(ign_logits_record, dim=0)
             all_labels = torch.cat(ign_labels_record, dim=0)
 
-        for k in self.metrics.keys():
-            self.metrics[k].compute_step()
-
-        return mean_tot_loss, mean_ign_loss, mean_cause_loss, all_logits, all_labels
-
-    def train(self, mode: Literal['training', 'testing'] = 'training'):
+    def train(self):
         self.optimizer = optim.AdamW(
             self.model.parameters(), 
             lr=self.base_lr, 
@@ -221,10 +212,6 @@ class WRMTrainer:
             min_lr=self.min_lr
         )
 
-        best = { 'epoch': 0, 'score': float("inf"), 'ign_err': float('inf') }
-        no_improve = 0
-        time0 = perf_counter()
-
         print(f"Starting training with parameters:\n"
             f"- model size: {estimate_model_size_mb(self.model):.2f}mb\n",
             f"- epochs: {self.ep_warmup} (warmup) {self.ep_max} (total) {self.ep_early_stop} (early stop)\n",
@@ -232,50 +219,49 @@ class WRMTrainer:
             f"- min lr: {self.min_lr}, base lr: {self.base_lr}, grad clip: {self.grad_clip}, weight decay: {self.weight_decay}\n",
         )
 
-        for epoch in range (1, self.ep_max + 1):
-            trn_m_tot_loss, trn_m_ign_loss, trn_m_cause_loss, lr_used = self.train_epoch()
-            val_m_tot_loss, val_m_ign_loss, val_m_cause_loss, _, _ = self.eval_epoch()
+        time0 = perf_counter()
+        for _ in range (1, self.ep_max + 1):
+            self.train_epoch()
+            self.eval_epoch()
 
-            # score as shared normalized max over longitudinal and lateral error from goal
-            score = val_m_tot_loss
-            new_best = score < best['score']
-            save_best = False # new_best and va_lon_err < lon_err_goal and va_lat_err < lat_err_goal
+            score, new_best, trn_last, val_last = self.mm.epoch_forward()
+            save_best = False 
 
-            print(f"[Epoch {epoch}] (lr: {lr_used:.6f})\n"
-                f"Train >> mL (total): {trn_m_tot_loss:.4f}, mL (ignition): {trn_m_ign_loss:.4f}, mL (cause): {trn_m_cause_loss:.3f}\n"
-                f"Val   >> mL (total): {val_m_tot_loss:.4f}, mL (ignition): {val_m_ign_loss:.4f}, mL (cause): {val_m_cause_loss:.3f}\n",
-                f"         SCORE:{score:.4f}"
-            )
-
-            if new_best:
-                best['epoch'] = epoch
-                best['ign_err'] = val_m_ign_loss
-                no_improve = 0
-            else:
-                no_improve += 1
-                print(f"\n")
-                if no_improve > self.ep_early_stop:
-                    break
-
-            if new_best and not save_best:
-                print(f"NEW BEST! >> ce. err={val_m_ign_loss:.4f} SCORE={score:.5f}\n")
+            if self.mm.no_improve > self.ep_early_stop:
+                break
+                
             if save_best:
-                print(f"NEW BEST! >> Beat ce. error < {val_m_ign_loss}! Saving model\n")
+                print(f"You beat the goal!! Saving model\n")
                 save_model(self.model)
 
         elapsed_min = (perf_counter() - time0) // 60
         elapsed_sec = (perf_counter() - time0) % 60
         print(f"Finished training in {elapsed_min:.0f} min {elapsed_sec:.0f} sec")
-        print(f"Best score @epoch {best['epoch']} >> score: {best['score']:.5f}, lat. err: {best['lat_err']:.5f}, lon. err: {best['lon_err']:.5f}")
+
+        print(f"Best score @epoch {self.mm.best['epoch']} >> score: {self.mm.best['score']:.5f}")
 
         # Do some plotting and fun visualizations!
-        ign_accuracies = self.metrics['ign'].record
-        cause_accuracies = self.metrics['ign_cause'].record
-        
-        self.metrics['ign_matrix'].compute_rates().plot()
+        trn_losses, val_losses = self.mm.get_history()
 
-        
+        trn_ignit_acc, trn_cause_acc = self.mm.trn_accuracies[0], self.mm.trn_accuracies[1]
 
+        val_ignit_acc, val_cause_acc = self.mm.val_accuracies[0], self.mm.val_accuracies[1]
+        val_ignit_cm, val_cause_cm = self.mm.val_cm[0], self.mm.val_cm[1]
+        last_ign_cm, runn_ign_cms, ign_cm_record = val_ignit_cm.get_history()
+        last_cause_cm, runn_cause_cms, ign_cause_record = val_ignit_cm.get_history()
+        
+        # Train vs. Eval
+        plot_class_accuracy(epochs, val_ignit_acc, val_cause_acc, trn_ignit_acc, trn_cause_acc, save=True)
+        plot_loss_curves(epochs, trn_losses, val_losses, save=True)
+        
+        # --- Validation sets ---
+        # CM rates per epoch per class
+        plot_rates_per_epoch(epochs, runn_ign_cms, save=True)
+        plot_rates_per_epoch(epochs, runn_cause_cms, save=True)
+
+    def test(self):
+        return
+        
 
 if __name__ == "__main__":
     set_global_seed(42)
@@ -307,16 +293,17 @@ if __name__ == "__main__":
     weight_decay = 3e-5
     grad_clip = 1.0
 
-    feature_grid = FeatureGrid(
+    fg = FeatureGrid(
         mode = "load",
         start_date="2000-01-01", 
         end_date="2020-12-31",
     )
 
-    wrm_trainer = WRMTrainer(
-        device = device,
-        train_loader = feature_grid.train_loader,
-        val_loader = feature_grid.val_loader,
+    wt = WRMTrainer(
+        device = device, mode = "train",
+        train_loader = fg.train_loader,
+        val_loader = fg.val_loader,
+        ign_pos_weight = fg.ign_pos_weight,
         model_params = {
             # Encoder
             "in_channels": in_channels, "embed_dim": embed_dim,
@@ -338,6 +325,3 @@ if __name__ == "__main__":
         grad_clip = 1.0,
         debug = True
     )
-
-    wrm_trainer.train()
-    # wrm_trainer.test()
