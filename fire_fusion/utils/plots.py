@@ -1,23 +1,62 @@
+from typing import Dict, List, Tuple
 from matplotlib import pyplot as plt
 from matplotlib.colors import ListedColormap
 import numpy as np
+from sklearn.calibration import calibration_curve
 import torch
+from sklearn.metrics import (
+    average_precision_score,
+    confusion_matrix,
+    accuracy_score,
+    jaccard_score,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
 
-def plot_training_loss(train_losses: list[float], save_path: str | None = None):
-    """
-    Plot training loss vs epoch.
-    """
-    epochs = np.arange(1, len(train_losses) + 1)
+from ..train import Accuracy
 
+from ..config.path_config import ARTIFACTS_DIR
+
+
+def plot_class_accuracy(
+    epochs: Tuple,
+    val_ignit_acc: Accuracy,
+    val_cause_acc: Accuracy,
+    trn_ignit_acc: Accuracy,
+    trn_cause_acc: Accuracy,
+    save: bool = True,
+):
     plt.figure()
-    plt.plot(epochs, train_losses, marker="o")
+    plt.plot(epochs, trn_ignit_acc.record, label="Ignition acc (train)")
+    plt.plot(epochs, trn_cause_acc.record, label="Cause acc (train)")
+    plt.plot(epochs, val_ignit_acc.record, label="Ignition acc (val)")
+    plt.plot(epochs, val_cause_acc.record, label="Cause acc (val)")
     plt.xlabel("Epoch")
-    plt.ylabel("Training loss")
-    plt.title("Training loss vs epoch")
-    plt.grid(True)
+    plt.ylabel("Accuracy")
+    plt.title("Validation accuracy per epoch")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.4)
+    plt.tight_layout()
 
-    if save_path is not None:
-        plt.savefig(save_path, bbox_inches="tight", dpi=200)
+    if save:
+        plt.savefig(ARTIFACTS_DIR / "class_accuracy.png", bbox_inches="tight", dpi=200)
+    else:
+        plt.show()
+
+
+def plot_loss_curves(epochs: Tuple, trn_losses, val_losses, save: bool = True):
+    plt.figure()
+    plt.plot(epochs, trn_losses, label="Train loss")
+    plt.plot(epochs, val_losses, label="Val loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Loss per epoch")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.4)
+    plt.tight_layout()
+
+    if save:
+        plt.savefig(ARTIFACTS_DIR / "losses.png", bbox_inches="tight", dpi=200)
     else:
         plt.show()
 
@@ -40,66 +79,101 @@ def to_numpy_grid(x: torch.Tensor | np.ndarray) -> np.ndarray:
     raise ValueError(f"Expected grid of shape [H, W] or [1, H, W], got {x.shape}")
 
 
-def reliability_diagram(
-    probs: torch.Tensor,
-    labels: torch.Tensor,
-    num_bins: int = 10,
-    title: str = "Reliability diagram",
-    save_path: str | None = None
-):
-    """
-    Compute and plot a reliability diagram (calibration curve).
-    probs:  [N] tensor of predicted probabilities in [0,1]
-    labels: [N] tensor of {0,1}
-    """
-    probs = probs.detach().cpu().numpy()
-    labels = labels.detach().cpu().numpy()
-
-    bin_edges = np.linspace(0.0, 1.0, num_bins + 1)
-    bin_indices = np.digitize(probs, bin_edges, right=True) - 1
-    # bin_indices in [0, num_bins-1]
-
-    bin_centers = []
-    avg_pred_in_bin = []
-    frac_pos_in_bin = []
-    counts_in_bin = []
-
-    for b in range(num_bins):
-        mask = (bin_indices == b)
-        if not np.any(mask):
-            continue
-
-        probs_b = probs[mask]
-        labels_b = labels[mask]
-
-        bin_center = 0.5 * (bin_edges[b] + bin_edges[b+1])
-        bin_centers.append(bin_center)
-        avg_pred_in_bin.append(probs_b.mean())
-        frac_pos_in_bin.append(labels_b.mean())
-        counts_in_bin.append(mask.sum())
-
-    bin_centers = np.array(bin_centers)
-    avg_pred_in_bin = np.array(avg_pred_in_bin)
-    frac_pos_in_bin = np.array(frac_pos_in_bin)
+def plot_rates_per_epoch(epochs: Tuple, rates: Tuple, save=True):
+    tpr, tnr, fpr, fnr = rates
 
     plt.figure()
-    # y = x diagonal
-    plt.plot([0, 1], [0, 1], linestyle="--")
+    plt.plot(epochs, tpr, label="TPR (recall)")
+    plt.plot(epochs, tnr, label="TNR (specificity)")
+    plt.plot(epochs, fpr, label="FPR")
+    plt.plot(epochs, fnr, label="FNR")
+    plt.xlabel("Epoch")
+    plt.ylabel("Rate")
+    plt.title("Ignition rates per epoch")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.4)
+    plt.tight_layout()
 
-    # calibration curve
-    plt.plot(avg_pred_in_bin, frac_pos_in_bin, marker="o")
+    if save:
+        plt.savefig(ARTIFACTS_DIR / "rates.png", bbox_inches="tight", dpi=200)
+    else:
+        plt.show()
 
-    # Optional: show bin points scaled by sample count
-    # sizes = np.array(counts_in_bin) / np.max(counts_in_bin) * 200
-    # plt.scatter(avg_pred_in_bin, frac_pos_in_bin, s=sizes)
 
+# ---------- History helpers using ConfusionMatrix.record ----------
+
+def precision_recall_history(record: List[Dict]) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Given confusion-matrix record entries, return macro precision and recall for each epoch.
+    """
+    precisions = np.array([r["precision"] for r in record], dtype=float)
+    recalls = np.array([r["recall"] for r in record], dtype=float)
+    return precisions, recalls
+
+
+def auc_history(record: List[Dict]) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Extract PR-AUC and ROC-AUC per epoch from record (if present).
+    """
+    pr_aucs = [r["pr_auc"] for r in record if r.get("pr_auc") is not None]
+    roc_aucs = [r["roc_auc"] for r in record if r.get("roc_auc") is not None]
+    return np.asarray(pr_aucs, dtype=float), np.asarray(roc_aucs, dtype=float)
+
+
+def auc_vs_f1_history(
+    record: List[Dict],
+    which_auc: str = "roc_auc",  # or "pr_auc"
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Return (AUC, F1) pairs per epoch for plotting.
+    """
+    aucs = []
+    f1s = []
+    for r in record:
+        auc_val = r.get(which_auc, None)
+        if auc_val is None:
+            continue
+        aucs.append(float(auc_val))
+        f1s.append(float(r["f1"]))
+    return np.asarray(aucs), np.asarray(f1s)
+
+
+def reliability_diagram(
+    probs: torch.Tensor | np.ndarray,
+    labels: torch.Tensor | np.ndarray,
+    num_bins: int = 10,
+    title: str = "Reliability diagram",
+    save_path: str | None = None,
+):
+    """
+    Compute and plot a reliability diagram (calibration curve) using sklearn.calibration_curve.
+    probs:  [N] predicted probabilities in [0,1]
+    labels: [N] true labels {0,1}
+    """
+    if isinstance(probs, torch.Tensor):
+        probs = probs.detach().cpu().numpy()
+    if isinstance(labels, torch.Tensor):
+        labels = labels.detach().cpu().numpy()
+
+    probs = np.asarray(probs, dtype=float)
+    labels = np.asarray(labels, dtype=int)
+
+    frac_pos, mean_pred = calibration_curve(
+        labels, probs, n_bins=num_bins, strategy="uniform"
+    )
+
+    plt.figure()
+    plt.plot([0, 1], [0, 1], linestyle="--", label="Perfect calibration")
+    plt.plot(mean_pred, frac_pos, marker="o", label="Model")
     plt.xlabel("Mean predicted probability")
-    plt.ylabel("Empirical fire frequency")
+    plt.ylabel("Empirical frequency")
     plt.title(title)
     plt.grid(True)
+    plt.legend()
 
     if save_path is not None:
         plt.savefig(save_path, bbox_inches="tight", dpi=200)
+        plt.close()
     else:
         plt.show()
 
@@ -110,11 +184,10 @@ def plot_XY_grid(
     title: str = "",
     vmin: float | None = None,
     vmax: float | None = None,
-    save_path: str | None = None
+    save_path: str | None = None,
 ):
     """
     Plot a heatmap of a continuous field [H, W] with water cells in black.
-    Uses 'coolwarm' (blue to red) as base colormap.
     """
     data = np.array(grid_2d, dtype=float)
 
@@ -122,11 +195,9 @@ def plot_XY_grid(
         if isinstance(water_mask, torch.Tensor):
             water_mask = water_mask.detach().cpu().numpy()
         water_mask = np.array(water_mask).astype(bool)
-        # mask out water cells
         data = np.ma.masked_where(water_mask, data)
 
     cmap = plt.cm.get_cmap("coolwarm").copy()
-    # any masked entries (water) will be shown as black
     cmap.set_bad(color="black")
 
     if vmin is None:
@@ -147,66 +218,8 @@ def plot_XY_grid(
         plt.show()
 
 
-def plot_feature_time_XY(
-    features: torch.Tensor | np.ndarray,
-    water_mask: torch.Tensor | np.ndarray | None,
-    time_idx: int | None,
-    channel_idx: int,
-    title: str = "",
-    save_path: str | None = None
-):
-    """
-    Visualize a specific feature channel at time T as a heatmap.
-    features: [T, C, H, W], [C, H, W], or [H, W].
-    water_mask: [H, W] or None.
-    """
-    grid_2d = select_time_channel(features, time_idx=time_idx, channel_idx=channel_idx)
-
-    if isinstance(grid, torch.Tensor):
-        grid = grid.detach().cpu().numpy()
-    grid = np.array(grid)
-
-    if grid.ndim == 2:
-        # already [H, W]
-        return grid
-
-    if grid.ndim == 3:
-        # assume [C, H, W]
-        if channel_idx is None:
-            raise ValueError("channel_idx must be provided for grid with shape [C, H, W]")
-        return grid[channel_idx]
-
-    if grid.ndim == 4:
-        # assume [T, C, H, W]
-        if time_idx is None or channel_idx is None:
-            raise ValueError("time_idx and channel_idx must be provided for [T, C, H, W]")
-        return grid[time_idx, channel_idx]
-
-    raise ValueError(f"Unsupported grid shape: {grid.shape}")
-
-
-
-def plot_model_prob_grid_time_t(
-    probs: torch.Tensor,
-    water_mask: torch.Tensor | np.ndarray | None = None,
-    title: str = "Predicted ignition probability",
-    save_path: str | None = None
-):
-    """
-    Plot model output probabilities [H, W] with water in black.
-    probs in [0, 1].
-    """
-    x = probs.detach().cpu().numpy()
-    grid_2d = to_numpy_grid(probs)
-
-    plot_grid(
-        grid_2d,
-        water_mask=water_mask,
-        title=title,
-        vmin=0.0,
-        vmax=1.0,
-        save_path=save_path
-    )
+# The remaining grid/time visualization helpers do not benefit from sklearn
+# and are left largely as-is.
 
 
 def plot_label_grid_time_t(
@@ -214,7 +227,8 @@ def plot_label_grid_time_t(
     water_mask: torch.Tensor | np.ndarray | None = None,
     time_idx: int | None = None,
     title: str = "Fire labels",
-    save_path: str | None = None):
+    save_path: str | None = None,
+):
     """
     Plot binary labels as a discrete heatmap:
       - 0 (no fire) = blue
@@ -229,7 +243,7 @@ def plot_label_grid_time_t(
         labels = labels.detach().cpu().numpy()
     labels = np.array(labels)
 
-    if labels.ndim == 3:
+    if labels.ndim == 3 and labels.shape[0] != 1:
         # assume [T, H, W]
         if time_idx is None:
             raise ValueError("time_idx must be provided for label grid with shape [T, H, W]")
@@ -249,7 +263,6 @@ def plot_label_grid_time_t(
         water_mask = np.array(water_mask).astype(bool)
         grid_2d = np.ma.masked_where(water_mask, grid_2d)
 
-    # discrete colormap: 0 -> blue, 1 -> red, masked -> black
     cmap = ListedColormap(["blue", "red"])
     cmap.set_bad(color="black")
 
@@ -271,7 +284,9 @@ def plot_probability_surface_3d(
     title: str = "Ignition probability surface",
     save_path: str | None = None
 ):
-    """ probs_2d: [H, W] probability grid in [0,1] """
+    """
+    probs_2d: [H, W] probability grid in [0,1]
+    """
     if isinstance(probs_2d, torch.Tensor):
         probs_2d = probs_2d.detach().cpu().numpy()
     probs_2d = np.array(probs_2d)
@@ -281,7 +296,7 @@ def plot_probability_surface_3d(
     ys = np.arange(H)
     X, Y = np.meshgrid(xs, ys)
 
-    Z = probs_2d  # [H, W]
+    Z = probs_2d
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")

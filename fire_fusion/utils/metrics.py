@@ -1,10 +1,18 @@
-from typing import Dict, Literal, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 import torch
 import torch.nn as nn
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sb
+from sklearn.metrics import (
+    average_precision_score,
+    confusion_matrix,
+    accuracy_score,
+    jaccard_score,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
 
 class TemperatureScaler(nn.Module):
     """
@@ -21,244 +29,332 @@ class TemperatureScaler(nn.Module):
 
 
 class Metric:
-    def __init__(self, id = ""):
-        self.id = id
+    def __init__(self):
         self.record = []
-
     def reset(self) -> None:
         raise NotImplementedError
-    
     def add(self, preds: torch.Tensor, labels: torch.Tensor):
         raise NotImplementedError
-
     def compute_step(self) -> Dict:
         raise NotImplementedError
+    def get_history(self):
+        raise NotImplementedError
+
 
 
 class Accuracy(Metric):
-    def __init__(self, id = ""):
-        super().__init__(id)
-        self.correct_ign = 0
-        self.correct_cause = 0
-
-    def reset(self):
-        """ should be called before each epoch """
-        self.correct = 0
-        self.correct = 0
+    def __init__(self):
+        super().__init__()
+        self.record = []
+        self.ep_correct = 0
+        self.ep_total = 0
+            
+    def reset(self) -> None:
+        self.ep_correct = 0
+        self.ep_total = 0
 
     @torch.no_grad()
     def add(self, preds: torch.Tensor, labels: torch.Tensor):
-        """
-        Updates accuracy and confusion matrix predictions and ground truth labels
-
+        """ Update accuracy and ground truth labels
         Args:
             preds (torch.LongTensor): (b,) or (b, h, w) tensor with class predictions
             labels (torch.LongTensor): (b,) or (b, h, w) tensor with ground truth class labels
         """
-        # Accuracy
-        self.correct += (preds.type_as(labels) == labels).sum().item()
-        self.total += labels.numel()
+        self.ep_correct += (preds.type_as(labels) == labels).sum().item()
+        self.ep_total += labels.numel()   
 
     def compute_step(self) -> dict[str, float]:
         """ Return scores for the epoch, reset internal state, and update p/epoch record """
-        acc = self.correct / (self.total + 1e-6)
+        acc = self.ep_correct / (self.ep_total + 1e-6)
         self.record.append(acc)
 
         scores = {
-            f"accuracy{'_'+self.id if self.id else ''}": acc,
-            f"n_samples{'_'+self.id if self.id else ''}": self.total,
+            f"accuracy": acc,
+            f"n_samples": self.ep_total
         }
         self.reset()
+
         return scores
+    
+    def get_history(self):
+        return self.record 
+
 
 
 class ConfusionMatrix(Metric):
-    """ Metric for computing mean IoU and accuracy """
+    """
+    Metric for computing mean IoU, accuracy, precision, recall, F1, and confusion matrix.
+    Uses sklearn under the hood.
+    """
 
-    def __init__(self, num_classes: int = 3, id=""):
-        """ Builds and updates a confusion matrix.
-            Args: num_classes: number of label classes
+    def __init__(self, num_classes: int = 3):
         """
-        super().__init__(id)
-        self.matrix = torch.zeros(num_classes, num_classes)
-        self.class_range = torch.arange(num_classes)
+        Args:
+            num_classes: number of label classes
+        """
+        super().__init__()
+        self.num_classes = num_classes
+        self.record: List[Dict] = []
+        self._y_true: List[np.ndarray] = []
+        self._y_pred: List[np.ndarray] = []
+
+    def reset(self):
+        self._y_true = []
+        self._y_pred = []
 
     @torch.no_grad()
     def add(self, preds: torch.Tensor, labels: torch.Tensor):
-        """ Updates using predictions and ground truth labels
-        Args:
-            preds (torch.LongTensor): (b,) or (b, h, w) tensor with class predictions
-            labels (torch.LongTensor): (b,) or (b, h, w) tensor with ground truth class labels
         """
-        if preds.dim() > 1:
-            preds = preds.view(-1)
-            labels = labels.view(-1)
+        Update using predictions and ground truth labels.
 
-        preds_one_hot = (preds.type_as(labels).cpu()[:, None] == self.class_range[None]).int()
-        labels_one_hot = (labels.cpu()[:, None] == self.class_range[None]).int()
-        update = labels_one_hot.T @ preds_one_hot
+        Args:
+            preds:  logits or class indices
+                    - (B, C, ...)  -> argmax over C
+                    - (B, ...)     -> treated as class indices
+            labels: (B, ...) with ground truth class indices
+        """
+        # Keep labels as a Tensor, derive a NumPy view
+        labels_flat = labels.view(-1)
+        labels_np = labels_flat.cpu().numpy().astype(int)
 
-        self.matrix += update
+        # If preds has a class dimension, assume logits and argmax over that dim
+        if preds.dim() > 1 and preds.size(1) > 1:
+            # e.g. (B, C) or (B, C, H, W)
+            preds = torch.argmax(preds, dim=1)
 
-    def reset(self):
-        """ Resets the confusion matrix, should be called before each epoch """
-        self.matrix.zero_()
+        preds_flat = preds.view(-1)
+        preds_np = preds_flat.cpu().numpy().astype(int)
 
-    def compute_step(self) -> dict[str, float]:
-        """ Computes the mean IoU and accuracy """
-        true_pos = self.matrix.diagonal()
-        class_iou = true_pos / (self.matrix.sum(0) + self.matrix.sum(1) - true_pos + 1e-5)
-        mean_iou = class_iou.mean().item()
-        accuracy = (true_pos.sum() / (self.matrix.sum() + 1e-5)).item()
+        self._y_true.append(labels_np)
+        self._y_pred.append(preds_np)
+
+    def compute_step(
+        self,
+        roc_auc: Optional[float] = None,
+        pr_auc: Optional[float] = None,
+    ) -> Dict[str, float]:
+        """
+        Compute metrics for the epoch, append to record, and reset internal storage.
+
+        roc_auc / pr_auc:
+            Optional AUC scores for this epoch (computed elsewhere from raw logits).
+        """
+        # if not self._y_true:
+        #     # No data; record zeros
+        #     self.record.append({
+        #         "mean_iou": 0.0,
+        #         "accuracy": 0.0,
+        #         "precision": 0.0,
+        #         "recall": 0.0,
+        #         "f1": 0.0,
+        #         "roc_auc": roc_auc,
+        #         "pr_auc": pr_auc,
+        #         "matrix": np.zeros((self.num_classes, self.num_classes), dtype=int),
+        #     })
+        #     return {"iou": 0.0, "accuracy": 0.0}
+
+        y_true = np.concatenate(self._y_true)
+        y_pred = np.concatenate(self._y_pred)
+        labels = np.arange(self.num_classes)
+
+        # Confusion matrix
+        cm = confusion_matrix(y_true, y_pred, labels=labels)
+
+        # Accuracy
+        accuracy = accuracy_score(y_true, y_pred)
+
+        # IoU (Jaccard) per class + macro mean
+        iou_per_class = jaccard_score(
+            y_true,
+            y_pred,
+            labels=labels,
+            average=None,
+            zero_division=0,
+        )
+        mean_iou = float(iou_per_class)
+
+        # Precision / Recall / F1 (macro)
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_true,
+            y_pred,
+            labels=labels,
+            average="macro",
+            zero_division=0,
+        )
 
         self.record.append({
             "mean_iou": mean_iou,
-            "accuracy": accuracy,
-            "matrix": self.matrix,
+            "accuracy": float(accuracy),
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
+            "roc_auc": roc_auc,
+            "pr_auc": pr_auc,
+            "matrix": cm,
         })
+
+        self.reset()
 
         return {
             "iou": mean_iou,
-            "accuracy": accuracy,
+            "accuracy": float(accuracy),
         }
-    
-    def compute_rates(self) -> Dict[str, Tuple]:
-        """ Returns: {
-            "last": ndarray (n classes,)
-            "running"       (epochs, n_classes)
-        }
-        Computes True-Positive, True-Negative, False-Positive, and False-Negative rates
-        for the last epoch, and 
+
+
+class MetricsManager:
+    def __init__(self, num_classes: Tuple = (2,)):
         """
+        num_classes: Tuple with number of classes per prediction head
+            e.g. one binary classifier + separate 4-class head -> (2, 4)
+        """
+        self.num_classes = num_classes
+        self.num_heads = len(num_classes)
 
-        last = self.matrix.float().cpu().numpy()
-        fTP = last.diagonal(axis1=1).astype(float)
-        fFN = last.sum(axis=1) - fTP
-        fFP = last.sum(axis=0) - fTP
-        fTN = last.sum - (fTP + fFN + fFP)
+        self.trn_logits: List[List[torch.Tensor]] = []
+        self.val_logits: List[List[torch.Tensor]] = []
+        self.trn_labels: List[List[torch.Tensor]] = []
+        self.val_labels: List[List[torch.Tensor]] = []
 
-        fTPR = fTP / (fTP + fFN + 1e-6)
-        fTNR = fTN / (fTN + fFP + 1e-6)
-        fFPR = fFP / (fFP + fTN + 1e-6)
-        fFNR = fFN / (fTP + fFN + 1e-6)
-        
-        rec = torch.stack([ r["matrix"].float() for r in self.record ], dim=0).numpy()
-        
-        rTP = rec.diagonal(rec, axis1=1, axis2=2)
-        rFN = rec.sum(axis=2) - rTP
-        rFP = rec.sum(axis=1) - rTP
-        rTN = rec.sum(axis=(1, 2)) - (rTP + rFN + fFP)
+        self.trn_accuracies = [Accuracy() for _ in range(self.num_heads)]
+        self.val_accuracies = [Accuracy() for _ in range(self.num_heads)]
 
-        rTPR = rTP / (rTP + rFN + 1e-6)
-        rTNR = rTN / (rTN + rFP + 1e-6)
-        rFPR = rFP / (rFP + rTN + 1e-6)
-        rFNR = rFN / (rTP + rFN + 1e-6)
+        # One confusion matrix per head, with correct class count
+        self.val_cm = [ConfusionMatrix(nc) for nc in self.num_classes]
 
-        self.last_cm = (fTPR, fTNR, fFPR, fFNR)
-        self.runn_cm = (rTPR, rTNR, rFPR, rFNR)
+        # Loss history: (num_loss_terms, num_epochs)
+        self.trn_losses: Optional[np.ndarray] = None
+        self.val_losses: Optional[np.ndarray] = None
 
-        return {
-            "last": self.last_cm,
-            "running": self.runn_cm
+        self.best = {
+            "epoch": 0,
+            "score": float("inf"),
+            "ign_err": float("inf"),
         }
-    
-    def plot(self,
-        type: Literal["last", "running", "f1", "recall", "precision"] = "last",
-        title="",
-        save_path = None
+        self.epoch = 1
+        self.no_improve = 0
+
+    def add(
+        self,
+        type: Literal["train", "val"],
+        logits: List[torch.Tensor],
+        golds: List[torch.Tensor],
     ):
-        (fTPR, fTNR, fFPR, fFNR) = self.last_cm
+        assert len(logits) == self.num_heads, f"send one logit tensor for each ({self.num_heads}) output head"
+        assert len(golds) == self.num_heads, f"send one golds tensor for each ({self.num_heads}) output head"
 
+        if type == "train":
+            self.trn_logits.append(logits)
+            self.trn_labels.append(golds)
+            for i, acc in enumerate(self.trn_accuracies):
+                preds_i = torch.argmax(logits[i], dim=1)
+                acc.add(preds_i, golds[i])
 
-        # ---------- LAST CONFUSION MATRIX ----------
-        last = self.matrix.float().cpu().numpy()  # shape (K, K)
-        K = last.shape[0]
-        classes = np.arange(K)
+        elif type == "val":
+            self.val_logits.append(logits)
+            self.val_labels.append(golds)
+            for i, acc in enumerate(self.val_accuracies):
+                preds_i = torch.argmax(logits[i], dim=1)
+                acc.add(preds_i, golds[i])
+            for i, cm in enumerate(self.val_cm):
+                cm.add(logits[i], golds[i])
 
-        # Helper: per-class metrics from a (K, K) confusion matrix
-        def _per_class_metrics(cm: np.ndarray):
-            tp = np.diag(cm).astype(float)
-            fn = cm.sum(axis=1) - tp
-            fp = cm.sum(axis=0) - tp
+    def add_epoch_totals(
+        self,
+        type: Literal["train", "val"],
+        losses: np.ndarray,
+    ):
+        """
+        losses: 1D array of loss terms for this epoch, e.g. [total, ign, cause]
+        Stored as columns in (num_loss_terms, num_epochs).
+        """
+        new_col = np.asarray(losses).reshape(-1, 1)
 
-            precision = tp / (tp + fp + 1e-6)
-            recall = tp / (tp + fn + 1e-6)
-            f1 = 2 * precision * recall / (precision + recall + 1e-6)
-            return precision, recall, f1
-
-        precision_last, recall_last, f1_last = _per_class_metrics(last)
-
-        if type in ["last", "precision", "recall", "f1"]:
-            # 2D heatmap
-            
-
-            if type == "last":
-                data = last
-                x_label = "Predicted class"
-                y_label = "True class"
-                default_title = "Confusion matrix (last epoch)"
+        if type == "train":
+            if self.trn_losses is None:
+                self.trn_losses = new_col
             else:
-                if type == "precision":
-                    data = precision_last[None, :]   # shape (1, K)
-                    y_label = "Precision"
-                    default_title = "Per-class precision (last epoch)"
-                elif type == "recall":
-                    data = recall_last[None, :]
-                    y_label = "Recall"
-                    default_title = "Per-class recall (last epoch)"
-                else:  # "f1"
-                    data = f1_last[None, :]
-                    y_label = "F1 score"
-                    default_title = "Per-class F1 (last epoch)"
-
-                x_label = "Class index"
-
-            plt.figure(figsize=(6, 5))
-
-            im = plt.imshow(data, aspect="auto")
-            plt.colorbar(im)
-
-            plt.xticks(ticks=np.arange(K), labels=classes)
-            if type == "last":
-                plt.yticks(ticks=np.arange(K), labels=classes)
+                self.trn_losses = np.concatenate([self.trn_losses, new_col], axis=1)
+        elif type == "val":
+            if self.val_losses is None:
+                self.val_losses = new_col
             else:
-                plt.yticks(ticks=[0], labels=[y_label])
+                self.val_losses = np.concatenate([self.val_losses, new_col], axis=1)
 
-            plt.xlabel(x_label)
-            plt.ylabel(y_label if type == "last" else "")
-            plt.title(title or default_title)
+    def compute_val_auc(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compute ROC-AUC and PR-AUC per head across the full validation epoch.
 
-        elif type == "running":
-            # 3D surface of per-class F1 over epochs
+        Uses stored self.val_logits and self.val_labels.
+        Returns:
+            roc_aucs: (num_heads,)
+            pr_aucs:  (num_heads,)
+        """
+        roc_aucs: List[float] = []
+        pr_aucs: List[float] = []
 
-            rec = torch.stack([r["matrix"].float() for r in self.record], dim=0).cpu().numpy()
-            E = rec.shape[0]
-            epochs = np.arange(E)
+        for head_idx, n_classes in enumerate(self.num_classes):
+            logits_head = torch.cat([b[head_idx] for b in self.val_logits], dim=0)
+            labels_head = torch.cat([b[head_idx] for b in self.val_labels], dim=0)
 
-            # Compute per-class F1 for each epoch → (E, K)
-            f1_epochs = np.zeros((E, K), dtype=float)
-            for e in range(E):
-                _, _, f1_e = _per_class_metrics(rec[e])
-                f1_epochs[e] = f1_e
+            probs = torch.softmax(logits_head, dim=1).cpu().numpy()
+            y = labels_head.cpu().numpy().astype(int)
 
-            # Meshgrid for surface
-            X, Y = np.meshgrid(epochs, classes, indexing="ij")
+            if n_classes == 2:
+                scores = probs[:, 1]
+                roc = roc_auc_score(y, scores)
+                pr = average_precision_score(y, scores)
+            else:
+                y_one_hot = np.eye(n_classes)[y]
+                roc = roc_auc_score(
+                    y_one_hot, probs, multi_class="ovr", average="macro"
+                )
+                pr = average_precision_score(
+                    y_one_hot, probs, average="macro"
+                )
 
-            fig = plt.figure(figsize=(7, 5))
-            ax = fig.add_subplot(111, projection="3d")
-            surf = ax.plot_surface(X, Y, f1_epochs, cmap="viridis")
-            fig.colorbar(surf, shrink=0.5, aspect=10)
+            roc_aucs.append(float(roc))
+            pr_aucs.append(float(pr))
 
-            ax.set_xlabel("Epoch")
-            ax.set_ylabel("Class index")
-            ax.set_zlabel("F1 score")
-            ax.set_title(title or "Per-class F1 over epochs")
+        return np.asarray(roc_aucs), np.asarray(pr_aucs)
 
+    def epoch_forward(self):
+        """
+        Print losses for this epoch, update best score, and increment epoch counter.
+        Assumes add_epoch_totals() has been called for both train and val.
+        """
+        assert self.trn_losses is not None and self.val_losses is not None, "Call add_epoch_totals() before epoch_forward"
+
+        trn_last = self.trn_losses[:, -1]
+        val_last = self.val_losses[:, -1]
+        score = float(val_last[0])  # total validation loss
+
+        trn_total, trn_ign, trn_cause = trn_last[:3]
+        val_total, val_ign, val_cause = val_last[:3]
+
+        print(
+            f"[Epoch {self.epoch}]\n"
+            f"Train >> mL (total): {trn_total:.4f}, "
+            f"mL (ign): {trn_ign:.4f}, "
+            f"mL (cause): {trn_cause:.3f}\n"
+            f"Val   >> mL (total): {val_total:.4f}, "
+            f"mL (ign): {val_ign:.4f}, "
+            f"mL (cause): {val_cause:.3f}\n"
+            f"         SCORE: {score:.4f}"
+        )
+
+        new_best = False
+        if score < self.best["score"]:
+            print(f"NEW BEST! SCORE={score:.5f}\n")
+            new_best = True
+            self.best["epoch"] = self.epoch
+            self.best["train_loss"] = trn_last.copy()
+            self.best["eval_loss"] = val_last.copy()
+            self.best["score"] = score
+            self.no_improve = 0
         else:
-            raise ValueError(f"Unknown plot type: {type}")
+            self.no_improve += 1
 
-        if save_path is not None:
-            plt.savefig(save_path, bbox_inches="tight")
-            plt.close()
-        else:
-            plt.show()
+        self.epoch += 1
+        return score, new_best, trn_last, val_last
+    def get_history(self):
+        return self.trn_losses, self.val_losses

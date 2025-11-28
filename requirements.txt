@@ -18,4 +18,5 @@ hdf4 >= 4.2.15
 
 # plotting (optional)
 matplotlib
+sklearn
 seaborn >= 0.13.2
