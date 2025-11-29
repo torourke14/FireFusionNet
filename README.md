@@ -7,7 +7,11 @@ A Spatio-Temporal ConvFormer neural model utilizing to detect ignition & cause o
 ### Data Sources
 - **Climatology**: Landfire, National Landcover Database (NLCD), Gridded Population of the World (GPWv4), MCD15A2H (NASA LAADS), MOD13Q1 (NASA LAADS), gridMET (Climatology Lab)
 - **Fire labeling**: MCD64A1 (NASA LAADS), USFS Fire Occurence Point and Fire Perimeter Layers
-See *data/sources/READ_ME.md* and *FeatureOverview.xlsx* for data point usage
+
+### Reproduction Requirements
+- ~200gb storage
+- 32gb RAM (more preferred)
+- See *fire_fusion/dataset/SOURCING.md* for instructions
 
 ### Model
 - Spatial CNN Encoder (ResNet MLP)
