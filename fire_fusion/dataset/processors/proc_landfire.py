@@ -4,7 +4,7 @@ import pandas as pd
 
 from .processor import Processor
 from fire_fusion.config.feature_config import Feature
-from fire_fusion.utils.utils import load_as_xarr
+from ..build_utils import load_as_xarr
 from fire_fusion.config.path_config import LANDFIRE_DIR
 
 

@@ -13,7 +13,7 @@ from earthaccess import DataGranule
 
 from fire_fusion.config.feature_config import Feature
 from fire_fusion.config.path_config import MODIS_DIR
-from fire_fusion.utils.utils import load_as_xdataset
+from ..build_utils import load_as_xdataset
 from .processor import Processor
 
 class Modis(Processor):
@@ -105,7 +105,7 @@ class Modis(Processor):
         year_data: List[xr.DataArray] = []
         for fp in nc_files:
             ts = pd.Timestamp(self._parse_date(fp.name))
-            print(f"[LAADS] Parsing {fp.stem} --> {ts}")
+            # print(f"[LAADS] Parsing {fp.stem} --> {ts}")
 
             with load_as_xdataset(file=fp, variables=["250m 16 days NDVI", "250m 16 days VI Quality"]) as raw:
                 if len(raw.data_vars.items()) == 0:
@@ -149,7 +149,7 @@ class Modis(Processor):
         year_data: List[xr.DataArray] = []
         for fp in nc_files:
             ts = pd.Timestamp(self._parse_date(fp.name))
-            print(f"[LAADS] Parsing {fp.stem} --> {ts}")
+            # print(f"[LAADS] Parsing {fp.stem} --> {ts}")
 
             with load_as_xdataset(file=fp, variables=["Lai_500m", "FparLai_QC", "FparExtra_QC"]) as raw:
                 if len(raw.data_vars.items()) == 0:
@@ -202,7 +202,7 @@ class Modis(Processor):
         burn_doys: xr.DataArray | None = None
         for fp in nc_files:
             ts = pd.Timestamp(self._parse_date(str(fp.name)))
-            print(f"[LAADS] Parsing {fp.stem} --> {ts}")
+            # print(f"[LAADS] Parsing {fp.stem} --> {ts}")
 
             with load_as_xdataset(file=fp, variables=["Burn Date", "QA"]) as raw:
                 if len(raw.data_vars.items()) == 0:

@@ -5,7 +5,7 @@ import xarray as xr
 import pandas as pd
 
 from .processor import Processor
-from fire_fusion.utils.utils import K_to_F, load_as_xarr
+from ..build_utils import K_to_F, load_as_xarr
 from fire_fusion.config.feature_config import Feature
 from fire_fusion.config.path_config import GRIDMET_DIR
 
@@ -68,7 +68,7 @@ class GridMet(Processor):
                 
                 _add_year_data(arr, year)
 
-        elif f_cfg.key in ["th", "vs", "pr"]:
+        elif f_cfg.key in ["th", "vs", "pr", "fm100"]:
             files = GRIDMET_DIR.glob(f"{f_cfg.key}*.nc")
 
             for i, fp in enumerate(sorted(files)):
@@ -97,6 +97,7 @@ class GridMet(Processor):
                     raw = load_as_xarr(fp, name=f_cfg.name, variable="dead_fuel_moisture_100hr")
                     vals = self._reproject_arr_to_mgrid(self._preclip_native_arr(raw), f_cfg.resampling)
                     arr = self._build_dead_fuel_moisture_pct(vals, f_cfg)
+
 
                 _add_year_data(arr, year)
                 

@@ -5,7 +5,7 @@ import pandas as pd
 from fire_fusion.config.feature_config import Feature
 from fire_fusion.config.path_config import NLCD_DIR
 from fire_fusion.config.feature_config import LAND_COVER_RAW_MAP
-from fire_fusion.utils.utils import load_as_xarr
+from ..build_utils import load_as_xarr
 from .processor import Processor
 
 class NLCD(Processor):
@@ -28,15 +28,15 @@ class NLCD(Processor):
                     arr = self._preclip_native_arr(raw)
                     arr = self._reproject_arr_to_mgrid(arr, f_cfg.resampling)
                     
-                    if f_cfg.key == "LndCov":
-                        print(f"[NLCD] Computing {year} land cover % purely based on vibes..")
-                        arr = self._build_land_cover(arr, f_cfg)
-                    elif f_cfg.key == "FctImp":
+                    if f_cfg.key == "FctImp":
                         print(f"[NLCD] Resolving the great conflict of {year} between urban folk and farm folk..")
                         arr = self._build_frac_imp_surface(arr, f_cfg)
                     elif f_cfg.key == "tccconus":
                         print(f"[NLCD] Swinging from the trees like its {year}, weeeeeeeeee!!")
                         arr = self._build_canopy_cover_pct(arr, f_cfg)
+                    elif f_cfg.key == "LndCov":
+                        print(f"[NLCD] Computing {year} land cover % purely based on vibes..")
+                        arr = self._build_land_cover(arr, f_cfg)
                     else:
                         print(f"[NLCD] Unknown key {f_cfg.key}???")
 
@@ -53,7 +53,36 @@ class NLCD(Processor):
         feat_data = feature_by_year.transpose("time", "y", "x", ...)
         return feat_data
     
+
+    def _build_frac_imp_surface(self, feature: xr.DataArray, f_cfg: Feature):
+        # convert % to [0, 1], clip
+        fis = feature.where(~(feature > 100)).astype("float32")
+        fis = (fis / 100)
+
+        if f_cfg.clip is not None:
+            low, high = f_cfg.clip
+            fis = fis.clip(low, high)
+
+        fis = fis.fillna(0.0)
+        
+        fis.name = f_cfg.name
+        return fis
     
+    def _build_canopy_cover_pct(self, feature: xr.DataArray, f_cfg: Feature):
+        # convert % to [0, 1], clip
+        cc_frac = feature.where(~(feature > 100)).astype("float32")
+        cc_frac = (cc_frac / 100)
+
+        if f_cfg.clip is not None:
+            low, high = f_cfg.clip
+            cc_frac = cc_frac.clip(low, high)
+
+        cc_frac = cc_frac.fillna(0.0)
+
+        cc_frac.name = f_cfg.name
+        return cc_frac
+    
+    """ deprecated """
     def _build_land_cover(self, feature: xr.DataArray, f_cfg: Feature):
         H, W = feature.shape
 
@@ -80,33 +109,3 @@ class NLCD(Processor):
         lc_ohe = lc_ohe.rio.write_crs(self.gridref.rio.crs)
         lc_ohe = lc_ohe.rio.write_transform(self.gridref.rio.transform())
         return lc_ohe
-    
-
-    def _build_frac_imp_surface(self, feature: xr.DataArray, f_cfg: Feature):
-        # convert % to [0, 1], clip
-        fis = feature.where(~(feature > 100)).astype("float32")
-        fis = (fis / 100)
-
-        if f_cfg.clip is not None:
-            low, high = f_cfg.clip
-            fis = fis.clip(low, high)
-
-        fis = fis.fillna(0.0)
-        
-        fis.name = f_cfg.name
-        return fis
-    
-    
-    def _build_canopy_cover_pct(self, feature: xr.DataArray, f_cfg: Feature):
-        # convert % to [0, 1], clip
-        cc_frac = feature.where(~(feature > 100)).astype("float32")
-        cc_frac = (cc_frac / 100)
-
-        if f_cfg.clip is not None:
-            low, high = f_cfg.clip
-            cc_frac = cc_frac.clip(low, high)
-
-        cc_frac = cc_frac.fillna(0.0)
-
-        cc_frac.name = f_cfg.name
-        return cc_frac

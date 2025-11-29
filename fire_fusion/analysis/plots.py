@@ -13,9 +13,9 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from ..train import Accuracy
+from .metrics import Accuracy
 
-from ..config.path_config import ARTIFACTS_DIR
+from ..config.path_config import PLOTS_DIR
 
 
 def plot_class_accuracy(
@@ -39,7 +39,8 @@ def plot_class_accuracy(
     plt.tight_layout()
 
     if save:
-        plt.savefig(ARTIFACTS_DIR / "class_accuracy.png", bbox_inches="tight", dpi=200)
+        PLOTS_DIR.mkdir(exist_ok=True, parents=True)
+        plt.savefig(PLOTS_DIR / "class_accuracy.png", bbox_inches="tight", dpi=200)
     else:
         plt.show()
 
@@ -56,27 +57,10 @@ def plot_loss_curves(epochs: Tuple, trn_losses, val_losses, save: bool = True):
     plt.tight_layout()
 
     if save:
-        plt.savefig(ARTIFACTS_DIR / "losses.png", bbox_inches="tight", dpi=200)
+        PLOTS_DIR.mkdir(exist_ok=True, parents=True)
+        plt.savefig(PLOTS_DIR / "losses.png", bbox_inches="tight", dpi=200)
     else:
         plt.show()
-
-
-def to_numpy_grid(x: torch.Tensor | np.ndarray) -> np.ndarray:
-    """
-    Convert a torch tensor or numpy array to a 2D numpy array [H, W].
-    Accepts shapes:
-      - [H, W]
-      - [1, H, W]
-    """
-    if isinstance(x, torch.Tensor):
-        x = x.detach().cpu().numpy()
-    x = np.array(x)
-
-    if x.ndim == 2:
-        return x
-    if x.ndim == 3 and x.shape[0] == 1:
-        return x[0]
-    raise ValueError(f"Expected grid of shape [H, W] or [1, H, W], got {x.shape}")
 
 
 def plot_rates_per_epoch(epochs: Tuple, rates: Tuple, save=True):
@@ -95,12 +79,12 @@ def plot_rates_per_epoch(epochs: Tuple, rates: Tuple, save=True):
     plt.tight_layout()
 
     if save:
-        plt.savefig(ARTIFACTS_DIR / "rates.png", bbox_inches="tight", dpi=200)
+        PLOTS_DIR.mkdir(exist_ok=True, parents=True)
+        plt.savefig(PLOTS_DIR / "rates.png", bbox_inches="tight", dpi=200)
     else:
         plt.show()
 
 
-# ---------- History helpers using ConfusionMatrix.record ----------
 
 def precision_recall_history(record: List[Dict]) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -217,9 +201,6 @@ def plot_XY_grid(
     else:
         plt.show()
 
-
-# The remaining grid/time visualization helpers do not benefit from sklearn
-# and are left largely as-is.
 
 
 def plot_label_grid_time_t(

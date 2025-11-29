@@ -3,13 +3,12 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT     = PROJECT_ROOT / "data"
-RAW_DATA_DIR  = DATA_ROOT / "raw"
+FF_ROOT = PROJECT_ROOT / "fire_fusion"
 
+RAW_DATA_DIR  = DATA_ROOT / "raw"
 TRAIN_DATA_DIR = DATA_ROOT / "train"
 EVAL_DATA_DIR = DATA_ROOT / "eval"
 TEST_DATA_DIR = DATA_ROOT / "test"
-
-ARTIFACTS_DIR = PROJECT_ROOT / "fire_fusion" / "artifacts"
 
 LANDFIRE_DIR    = RAW_DATA_DIR / "landfire" / "downloaded"
 NLCD_DIR        = RAW_DATA_DIR / "nlcd" / "downloaded"
@@ -19,5 +18,9 @@ USFS_DIR        = RAW_DATA_DIR / "fire_usfs" / "downloaded"
 GRIDMET_DIR     = RAW_DATA_DIR / "gridmet" / "downloaded"
 MODIS_DIR       = RAW_DATA_DIR / "modis" / "fetched"
 CDS_DIR         = RAW_DATA_DIR / "cds" / "fetched"
+
+MODEL_SAVE_DIR = FF_ROOT / "model" / "saved"
+PLOTS_DIR = FF_ROOT / "analysis" / "plots"
+
 
 

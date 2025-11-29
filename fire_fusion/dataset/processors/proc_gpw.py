@@ -4,7 +4,7 @@ import pandas as pd
 
 from fire_fusion.config.feature_config import Feature
 from fire_fusion.config.path_config import GPW_DIR
-from fire_fusion.utils.utils import load_as_xarr
+from ..build_utils import load_as_xarr
 from .processor import Processor
 
 class GPW(Processor):

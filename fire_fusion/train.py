@@ -1,24 +1,22 @@
 import torch
 import torch.optim as optim
 import torch.nn as nn
-import pandas as pd
-import numpy as np
 from torch.utils.data import DataLoader
 from torch.amp.autocast_mode import autocast
 
+import numpy as np
 from typing import Literal, Tuple, Dict
 from tqdm import tqdm
 from time import perf_counter
-import matplotlib.pyplot as plt
-
-from .utils.plots import plot_class_accuracy, plot_loss_curves, plot_rates_per_epoch
 
 from .dataset.build import FeatureGrid
 from .model.model import FireFusionModel
-from .utils.metrics import ConfusionMatrix, Accuracy, MetricsManager
-from .utils.utils import estimate_model_size_mb, set_global_seed, get_device_config, save_model
-from .utils.utils import WarmupCosineAnnealingLR
-from .config.path_config import ARTIFACTS_DIR
+from .analysis.metrics import MetricsManager
+from .model.model_utils import (
+    estimate_model_size_mb, set_global_seed, get_device_config, 
+    save_model, WarmupCosineAnnealingLR
+)
+from .analysis.plots import plot_class_accuracy, plot_loss_curves, plot_rates_per_epoch
 
 
 class WRMTrainer:
