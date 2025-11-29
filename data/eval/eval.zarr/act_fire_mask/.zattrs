@@ -1,0 +1,8 @@
+{
+  "coordinates": "band crs dayofyear",
+  "_ARRAY_DIMENSIONS": [
+    "time",
+    "y",
+    "x"
+  ]
+}

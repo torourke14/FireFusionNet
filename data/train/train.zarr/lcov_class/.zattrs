@@ -1,0 +1,8 @@
+{
+  "grid_mapping": "spatial_ref",
+  "_ARRAY_DIMENSIONS": [
+    "y",
+    "x",
+    "lcov_class"
+  ]
+}

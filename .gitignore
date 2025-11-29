@@ -10,7 +10,6 @@ build/
 *.zip
 *.gzip
 *.accdb
-*.zarr
 
 # Jupyter Notebook
 .ipynb_checkpoints
