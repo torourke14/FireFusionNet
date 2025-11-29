@@ -181,7 +181,11 @@ class FeatureGrid:
                     self.master_ds = self.master_ds.merge(out)
 
             if cfg.drop_inputs is not None:
-                self.master_ds = self.master_ds.drop_vars(cfg.drop_inputs)
+                try:
+                    self.master_ds = self.master_ds.drop_vars(cfg.drop_inputs)
+                except Exception as e:
+                    print(f"Failed to drop inputs for {new_fname}. Continuing")
+                    pass
 
         print(f"[FeatureGrid] Finished deriving features!")
         print(f"- dims: {self.master_ds.dims}")
