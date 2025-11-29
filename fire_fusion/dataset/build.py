@@ -94,16 +94,17 @@ class FeatureGrid:
         
         # keeps cells where ALL channels are finite, everywhere else 0
         # convert back to dataset
-        nan_mask = data.notnull().all(dim="channel")
-        masked = data.where(nan_mask, 0.0).fillna(0.0)
-        ds_masked = masked.to_dataset(dim="channel")
+        nan_mask = None
+        for name in features:
+            valid = self.master_ds[name].notnull()
 
-        # update feature variables in master_ds
-        ds_masked = ds_masked.assign_coords(channel=("channel", features))
-        ds_masked = ds_masked.rename_vars({old: name for old, name in zip(ds_masked.data_vars, features)})
+            if nan_mask is None: nan_mask = valid
+            else: nan_mask = nan_mask & valid
 
-        # in place update
-        self.master_ds.update(ds_masked)
+        for name in features:
+            var = self.master_ds[name]
+            masked_var = var.where(nan_mask, 0.0).fillna(0.0)
+            self.master_ds[name] = masked_var
     
 
     def _apply_normalize(self) -> None:
@@ -184,6 +185,9 @@ class FeatureGrid:
 
     
     def _save_splits_to_zarr(self, split=(0.6, 0.2, 0.2)) -> None:
+        
+
+
         print("Spraying neutrino stabilization goo in sub-basement level 7...")
 
         assert (sum(split) - 1.0) < 1e-6, f"splits must equal 1.0"
@@ -199,24 +203,38 @@ class FeatureGrid:
         test_times  = times[n_train+n_eval:]
 
         print("Detaching sub-basement level 7 from core modules")
-
         compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
         encoding = { var: { "compressor": compressor } for var in self.master_ds.data_vars }
 
-        self.master_ds.sel(time=train_times).to_zarr(
+        def clear_attrs(ds):
+            """ zarr saves as JSON, doesn't allow complex datatypes """
+            ds.attrs.clear()
+            for var in ds.values(): var.attrs.clear()
+        
+        train_ds = self.master_ds.sel(time=train_times)
+        clear_attrs(train_ds)
+        train_ds.to_zarr(
             os.path.join(TRAIN_DATA_DIR, f"train.zarr"),
             mode="w",
-            encoding=encoding
+            encoding=encoding,
+            zarr_version=2 # fix working with Blosc compresssor
         )
-        self.master_ds.sel(time=eval_times).to_zarr(
+
+        eval_ds = self.master_ds.sel(time=eval_times)
+        clear_attrs(eval_ds)
+        eval_ds.to_zarr(
             os.path.join(EVAL_DATA_DIR, f"eval.zarr"),
             mode="w",
-            encoding=encoding
+            encoding=encoding,
+            zarr_version=2 # fix working with Blosc compresssor
         )
-        self.master_ds.sel(time=test_times).to_zarr(
+        test_ds = self.master_ds.sel(time=test_times)
+        clear_attrs(test_ds)
+        test_ds.to_zarr(
             os.path.join(TEST_DATA_DIR, f"test.zarr"),
             mode="w",
-            encoding=encoding
+            encoding=encoding,
+            zarr_version=2 # fix working with Blosc compresssor
         )
 
         
@@ -252,13 +270,13 @@ class FeatureGrid:
         self._apply_derived()
 
         # --- sanity crop
-        print(f"[FeatureGrid] Cuttin' da cheese..")
-        for var in self.master_ds.data_vars:
-            da = self.master_ds[var]
-            if "x" in da.dims and "y" in da.dims:
-                da = da.sel(x=slice(self.grid.attrs['x_min'], self.grid.attrs['x_max']), 
-                            y=slice(self.grid.attrs['y_min'], self.grid.attrs['y_max']))
-                self.master_ds[var] = da
+        # print(f"[FeatureGrid] Cuttin' da cheese..")
+        # for var in self.master_ds.data_vars:
+        #     da = self.master_ds[var]
+        #     if "x" in da.dims and "y" in da.dims:
+        #         da = da.sel(x=slice(self.grid.attrs['x_min'], self.grid.attrs['x_max']), 
+        #                     y=slice(self.grid.attrs['y_min'], self.grid.attrs['y_max']))
+        #         self.master_ds[var] = da
 
 
         # --- mask >> normalize >> save to .zarr
