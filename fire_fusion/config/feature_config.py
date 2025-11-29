@@ -87,6 +87,15 @@ class Feature:
     ds_norms: Optional[List[str]] = None            # sequence of normalizations
 
 
+def get_labels():
+    return [l for l in drv_feat_config() if l.is_label==True]
+
+def get_masks():
+    return (
+        [f for f in drv_feat_config() if f.is_mask==True] +
+        [f for feats in base_feat_config().values() for f in feats if f.is_mask==True]
+    )
+
 def base_feat_config():
     return {
         ### --- Processors -----------------------------------------
@@ -172,14 +181,14 @@ def base_feat_config():
             )
         ],
         "NLCD": [
-            Feature(
-                name = "lcov_class",
-                key = "LndCov",
-                resampling = Resampling.nearest,
-                time_interp = ("broadcast", "linear"),
-                num_classes = 9,
-                one_hot_encode = True
-            ),
+            # Feature(
+            #     name = "lcov_class",
+            #     key = "LndCov",
+            #     resampling = Resampling.nearest,
+            #     time_interp = ("broadcast", "linear"),
+            #     num_classes = 9,
+            #     one_hot_encode = True
+            # ),
             Feature(
                 name = "frac_imp_surface",
                 key = "FctImp",

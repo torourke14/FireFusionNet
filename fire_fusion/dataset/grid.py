@@ -35,8 +35,8 @@ def create_coordinate_grid(
     height_m = max_y - min_y
 
     # num of pixels in each direction
-    npx_x = int(np.ceil(width_m / resolution))   # W
-    npx_y = int(np.ceil(height_m / resolution))  # H
+    npx_x = int(np.ceil(width_m / resolution))
+    npx_y = int(np.ceil(height_m / resolution))
 
     # Snap upper-right corner to exact pixel grid
     max_x_aligned = min_x + npx_x * resolution
@@ -79,4 +79,7 @@ def create_coordinate_grid(
     grid = grid.rio.write_crs(crs_obj)
     grid = grid.rio.write_transform(transform)
 
+    print(f"(T, Y, X) Grid Created:")
+    print(f"- (Y, X) pixels: ({npx_y}, {npx_x})")
+    print(f"- tot days in date range: {len(time_index)}")
     return grid

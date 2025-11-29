@@ -60,8 +60,10 @@ class FeatureGrid:
     ):
         self.fconfig = base_feat_config()
         self.drv_config = drv_feat_config()
-        self.label_names = [ l.name for l in self.drv_config if l.is_label==True]
-        self.mask_names = [ m.name for m in self.drv_config if m.is_mask==True]
+        self.label_names = [l.name for l in get_labels()]
+        self.mask_names = [m.name for m in get_masks()]
+        print("masks: ", self.mask_names)
+        print("masks: ", self.mask_names)
 
         if mode == "load":
             self.load_features(batch_size, device, num_workers, pin_memory)
@@ -72,11 +74,7 @@ class FeatureGrid:
                 resolution,
                 lat_bounds, lon_bounds
             )
-
-            print(f"Grid Created:")
-            print(f"- y-coordinates: ({self.grid.attrs['y_min']:.5f}, {self.grid.attrs['y_min']:.5f})")
-            print(f"- x-coordinates: ({self.grid.attrs['x_min']:.5f}, {self.grid.attrs['x_max']:.5f})")
-
+            
             self.processors: Dict[str, Processor] = {
                 pname: PROC_CLASSES[pname](features, self.grid)
                 for pname, features in self.fconfig.items()
