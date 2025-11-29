@@ -11,7 +11,10 @@ from numcodecs import Blosc
 from .data_loader import FireDataset
 from .grid import create_coordinate_grid
 from fire_fusion.config.path_config import TRAIN_DATA_DIR, EVAL_DATA_DIR, TEST_DATA_DIR
-from fire_fusion.config.feature_config import Feature, base_feat_config, drv_feat_config
+from fire_fusion.config.feature_config import (
+    Feature, base_feat_config, drv_feat_config, 
+    get_labels, get_masks
+)
 
 from .processors.processor import Processor
 from .processors.proc_derived_feats import DerivedProcessor
@@ -51,6 +54,7 @@ class FeatureGrid:
         batch_size = 4,
         num_workers = 0,
         pin_memory = True,
+        load_datasets: List[Literal['train','eval','test']] = ["train", "eval"],
         # required for building
         start_date = "2000-01-01", 
         end_date = "2020-12-31",
@@ -66,9 +70,11 @@ class FeatureGrid:
         print("masks: ", self.mask_names)
 
         if mode == "load":
+            self.load_datasets = load_datasets
             self.load_features(batch_size, device, num_workers, pin_memory)
         else:
             self.time_index = pd.date_range(start_date, end_date, freq="D")
+            
             self.grid = create_coordinate_grid(
                 self.time_index,
                 resolution,
@@ -88,7 +94,6 @@ class FeatureGrid:
         excluded = set(self.label_names) | set(self.mask_names) | {"nan_mask"}
 
         features = [f for f in self.master_ds.data_vars if f not in excluded]
-        data = self.master_ds[features].to_array("channel")
         
         # keeps cells where ALL channels are finite, everywhere else 0
         # convert back to dataset
@@ -126,16 +131,16 @@ class FeatureGrid:
             print(f"[FeatureGrid] normalizing {f_config.name if f_config.name else f_config.expand_names}")
 
             clip = getattr(f_config, "ds_clip", None)
-            norms = getattr(f_config, "ds_norms", None)
-
+            if clip is not None:
+                feature = feature.clip(clip[0], clip[1])
+            
             ff = feature.where(np.isfinite(feature))
             f_mean = float(ff.mean(dim=ff.dims, skipna=True))
             f_std = float(ff.std(dim=ff.dims, skipna=True))
             f_min = float(ff.min(dim=ff.dims, skipna=True))
             f_max = float(ff.max(dim=ff.dims, skipna=True))
 
-            if clip is not None:
-                feature = feature.clip(clip[0], clip[1])
+            norms = getattr(f_config, "ds_norms", None)
             if norms is not None:
                 for ntype in norms:
                     if ntype == "z_score":
@@ -183,9 +188,6 @@ class FeatureGrid:
 
     
     def _save_splits_to_zarr(self, split=(0.6, 0.2, 0.2)) -> None:
-        
-
-
         print("Spraying neutrino stabilization goo in sub-basement level 7...")
 
         assert (sum(split) - 1.0) < 1e-6, f"splits must equal 1.0"
@@ -234,6 +236,12 @@ class FeatureGrid:
             encoding=encoding,
             zarr_version=2 # fix working with Blosc compresssor
         )
+        print(f"Saved splits to .zarrs <3")
+        print("--- TRAIN DATASET ---")
+        for d in train_ds.dims:
+            print(f"dim: {d}")
+        for f in train_ds.data_vars:
+            print(f"Channels: {f}, dims: {train_ds[f].dims}, shape:{np.array(train_ds[f].data).shape}")
 
         
     def build_features(self) -> None:
@@ -242,8 +250,6 @@ class FeatureGrid:
 
         for src, processor in self.processors.items():
             features: list[Feature] = processor.cfg
-
-            print(f"\n=== Sourcing {src} data ===")
             for config in features:
                 try:
                     layer = processor.build_feature(config)
@@ -252,7 +258,6 @@ class FeatureGrid:
                     return
                 layers.append(layer)
 
-        print(f"[FeatureGrid] Finished extracting features! ")
         del self.processors
         try:
             self.master_ds: xr.Dataset = xr.merge(layers, join="outer")
@@ -283,7 +288,6 @@ class FeatureGrid:
         self._apply_mask_nan()
         self._apply_normalize()
         self._save_splits_to_zarr()
-        print(f"Saved splits to .zarrs <3")
 
 
     def load_features(self, batch_size, device, num_workers, pin_memory) -> None:
@@ -298,48 +302,58 @@ class FeatureGrid:
         n_ign_pos = (ign_valid == 1).sum().item()
         n_ign_neg = (ign_valid == 0).sum().item()
 
-        # save, picked up in train.py when FeatureGrid generated
         self.ign_pos_weight = n_ign_neg / float(n_ign_pos)
+        
         print(
             f"[FeatureGrid] pos ignition weights:",
             f"- positives = {n_ign_pos:,}, negatives={n_ign_neg:,}"
             f"- pos_weight={self.ign_pos_weight:.2f}"
         )
 
+        # fix "spatial ref" sneaking into features as empty dim
+        self.feature_names = [
+            v for v in train_ds.data_vars
+            if v not in self.label_names
+            and v not in self.mask_names
+            and train_ds[v].dims == ("time", "y", "x")
+        ]
+
         self.train_loader = DataLoader(
             dataset = FireDataset(
                 data = train_ds,
                 device = device,
                 batch_size = batch_size,
-                shuffle = True
+                shuffle = True,
             ),
             batch_size=None,
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
-        self.val_loader = DataLoader(
-            dataset = FireDataset(
-                data = xr.open_zarr(EVAL_DATA_DIR / f"eval.zarr"),
-                device = device,
-                batch_size = batch_size,
-                shuffle = False
-            ),
-            batch_size=None,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-        )
-        self.test_loader = DataLoader(
-            dataset = FireDataset(
-                data = xr.open_zarr(TEST_DATA_DIR / f"test.zarr"),
-                device = device,
-                batch_size = batch_size,
-                shuffle = False
-            ),
-            batch_size=None,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-        )
-        print(f"Splits saved to Feature Grid. Access via 'self.train_loader/val_loader/test_loader'")
+
+        if "eval" in self.load_datasets:
+            self.eval_loader = DataLoader(
+                dataset = FireDataset(
+                    data = xr.open_zarr(EVAL_DATA_DIR / f"eval.zarr"),
+                    device = device,
+                    batch_size = batch_size,
+                    shuffle = False
+                ),
+                batch_size=None,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+            )
+        if "test" in self.load_datasets:
+            self.test_loader = DataLoader(
+                dataset = FireDataset(
+                    data = xr.open_zarr(TEST_DATA_DIR / f"test.zarr"),
+                    device = device,
+                    batch_size = batch_size,
+                    shuffle = False
+                ),
+                batch_size=None,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+            )
 
 # -----------------------------------------------------------------------------------
 # ----------------------------------------------------------------------------------- 

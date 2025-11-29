@@ -22,7 +22,7 @@ from .analysis.plots import plot_class_accuracy, plot_loss_curves, plot_rates_pe
 class WRMTrainer:
     def __init__(self, mode: Literal['train', 'test'],
         train_loader: DataLoader,
-        val_loader: DataLoader,
+        eval_loader: DataLoader,
         ign_pos_weight,
         device: torch.device,
         model_params: Dict,
@@ -36,10 +36,8 @@ class WRMTrainer:
         self.device = device;
         self.use_amp = bool(device.type == "cuda")
 
-        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-
         self.train_loader = train_loader;
-        self.val_loader = val_loader
+        self.eval_loader = eval_loader
 
         mp = model_params
         self.model = FireFusionModel(
@@ -160,7 +158,7 @@ class WRMTrainer:
         ign_labels_record = []
 
         with torch.inference_mode():
-            for features, golds, masks in tqdm(self.val_loader, desc="Evaluating...", leave=False):
+            for features, golds, masks in tqdm(self.eval_loader, desc="Evaluating...", leave=False):
                 features = features.to(self.device)
                 golds = { k: v.to(self.device) for k, v in golds.items() }
                 masks = { k: v.to(self.device) for k, v in masks.items() }
@@ -293,6 +291,7 @@ if __name__ == "__main__":
 
     fg = FeatureGrid(
         mode = "load",
+        load_datasets=["train", "eval"],
         start_date="2000-01-01", 
         end_date="2020-12-31",
     )
@@ -300,7 +299,7 @@ if __name__ == "__main__":
     wt = WRMTrainer(
         device = device, mode = "train",
         train_loader = fg.train_loader,
-        val_loader = fg.val_loader,
+        eval_loader = fg.eval_loader,
         ign_pos_weight = fg.ign_pos_weight,
         model_params = {
             # Encoder

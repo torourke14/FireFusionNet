@@ -6,7 +6,7 @@ import xarray as xr
 from pathlib import Path
 from typing import Dict, List, Literal, Sequence, Tuple
 
-from fire_fusion.config.feature_config import base_feat_config
+from fire_fusion.config.feature_config import base_feat_config, drv_feat_config
 
 # elif ntype == "one-hot-encode":
 #     one_hot_year = torch.nn.functional.one_hot(lc, num_classes=num_classes) # (T_year, H, W, C)
@@ -19,11 +19,10 @@ from fire_fusion.config.feature_config import base_feat_config
 class FireDataset(IterableDataset):
     def __init__(
         self,
-        data,
+        data: xr.Dataset,
         device: torch.device | None,
         batch_size: int = 32,
         shuffle: bool = True,
-        
     ):
         super().__init__()
         self.ds = data
@@ -31,14 +30,28 @@ class FireDataset(IterableDataset):
         self.batch_size = batch_size
         self.shuffle = shuffle
         
-        feat_config = base_feat_config()
-        self.label_names = [l.name for l in feat_config["LABELS"]]
-        self.mask_names = [m.name for m in feat_config["MASKS"]]
+        self.label_names= [l.name for l in drv_feat_config() if l.is_label==True]
+        self.mask_names = [m.name for m in drv_feat_config() if m.is_mask==True]
 
-        excluded = set(self.label_names) | set(self.mask_names)
-        self.feature_vars = [v for v in self.ds.data_vars if v not in excluded]
+        excluded = set(self.label_names) | set(self.mask_names) | {"spatial_ref"}
+        self.feature_vars = []
+        for v in self.ds.data_vars:
+            if v in excluded: continue
+            
+            dims = self.ds[v].dims
+            if dims == ("time", "y", "x"):
+                self.feature_vars.append(v)
+            else:
+                print(f"[FireDataset] dropping {v} from features due to dims={dims}")
 
         self.n_samples = self.ds.dims["time"]
+
+        print(f"Creating FireDatasetLoader instance with:")
+        for d in self.ds.dims:
+            print(f"dim: {d}")
+
+        for f in self.ds.data_vars:
+            print(f"Feature: {f}, dims: {self.ds[f].dims}, shape:{np.array(self.ds[f].data).shape}")
 
     def _slice_to_torch(self, start: int, end: int) -> Tuple[
         torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]
@@ -77,6 +90,12 @@ class FireDataset(IterableDataset):
         return X, label_slices, mask_slices
 
     def __iter__(self):
+        print("DEBUGGGGGG")
+
+        
+
+
+
         rng = np.random.default_rng()
         indices = np.arange(self.n_samples)
 
