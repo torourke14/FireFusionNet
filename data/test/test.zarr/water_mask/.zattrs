@@ -1,9 +1,0 @@
-{
-  "coordinates": "band crs dayofyear spatial_ref",
-  "dtype": "bool",
-  "_ARRAY_DIMENSIONS": [
-    "time",
-    "y",
-    "x"
-  ]
-}
