@@ -68,7 +68,7 @@ class FeatureGrid:
         self.drv_config = drv_feat_config()
         self.label_names = [l.name for l in get_labels()]
         self.mask_names = [m.name for m in get_masks()]
-        print("masks: ", self.mask_names)
+        print("labels: ", self.label_names)
         print("masks: ", self.mask_names)
 
         if mode == "load":

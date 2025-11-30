@@ -300,31 +300,34 @@ class UsfsFire(Processor):
             pixel_size_m if pixel_size_m > 0 else 0.0
         )
         
-        # Loop over burn causes, computing gaussian filter for each
+        # Loop over burn causes, computing gaussian filter for each class
         kde_by_class = {}
         for cause in burn_da.coords["burn_cause"].values:
-            # (time, y, x) in numpy
-            cause_slice = cum_da.sel(burn_cause=cause).values
+            # (y, x) in numpy
+            cause_2d = cum_da.sel(burn_cause=cause).isel(time=-1).values.astype("float32")
 
-            if cause_slice.sum() == 0:
-                smoothed = cause_slice.astype("float32")
+            if cause_2d.sum() == 0:
+                smoothed = cause_2d
             else:
                 # Sigma = sigma=(0, sigma, sigma) >> smooth over X/Y, NOT TIME DIM
                 smoothed = gaussian_filter(
-                    cause_slice.astype("float32"),
-                    sigma=(0.0, sigma_pixels, sigma_pixels),
+                    cause_2d,
+                    # sigma=(0.0, sigma_pixels, sigma_pixels),
+                    sigma=sigma_pixels,
                     mode="constant"
                 )
 
             da_kde = xr.DataArray(
                 smoothed,
                 coords={
-                    "time": burn_da.coords["time"],
-                    "y": burn_da.coords["y"], "x": burn_da.coords["x"],
+                    "y": burn_da.coords["y"], 
+                    "x": burn_da.coords["x"],
                 },
-                dims=("time", "y", "x"),
+                dims=("y", "x"),
                 name=f"kde_{str(cause).lower()}"
             )
+            da_kde = da_kde.expand_dims({ "time": burn_da.coords["time"] })
+
             kde_by_class[f"kde_{str(cause).lower()}"] = da_kde
 
         kde_ds = xr.Dataset(kde_by_class)
