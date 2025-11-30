@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import DataLoader
 import xarray as xr
-from numcodecs import Blosc
+# from numcodecs import Blosc
+# from zarr.codecs import BloscCodec
 
 from .data_loader import FireDataset
 from .grid import create_coordinate_grid
@@ -197,9 +198,7 @@ class FeatureGrid:
         eval_yrs=(2017, 2018),
         test_yrs=(2019, 2020),
     ) -> None:
-        print("Spraying neutrino stabilization goo in sub-basement level 7...")
-
-        def yrs_to_d(y1: int, y2: int): return (f"{y1}-01-01", f"{y2}-12-31")
+        print("Spraying neutrino stabilization goo in sub-basement level 7...") 
  
         t = self.master_ds.time
         years = t.dt.year.values
@@ -212,41 +211,48 @@ class FeatureGrid:
         train_times = times[train_mask]
         eval_times  = times[eval_mask]
         test_times  = times[test_mask]
+        
+        # V2 Compressor -- use zarr_version=2
+        # compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
+        # encoding = {
+        #     var_name: { 
+        #         "chunks": (64, self.master_ds.dims["y"], self.master_ds.dims["x"]),
+        #         "compressor": compressor,
+        #     }
+        #     for var_name in self.master_ds.data_vars
+        # }
+        # Zarr v3 Blosc codec -- -- use consolidated=False, zarr_format=3
+        # codec = Blosc(cname="zstd", clevel=5, shuffle="bitshuffle")
+        # encoding = {
+        #     var_name: {
+        #         "compressors": [codec]
+        #     }   # note: 'compressors' (plural) + list
+        #     for var_name in self.master_ds.data_vars
+        # }
 
-        print("Detaching sub-basement level 7 from core modules")
-        compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
-        encoding = { var: { "compressor": compressor } for var in self.master_ds.data_vars }
 
         def clear_attrs(ds):
             """ zarr saves as JSON, doesn't allow complex datatypes """
             ds.attrs.clear()
             for var in ds.values(): var.attrs.clear()
-        
-        train_ds = self.master_ds.sel(time=train_times)
-        clear_attrs(train_ds)
-        train_ds.to_zarr(
-            os.path.join(TRAIN_DATA_DIR, f"train.zarr"),
-            mode="w",
-            encoding=encoding,
-            zarr_version=2 # fix working with Blosc compresssor
-        )
 
-        eval_ds = self.master_ds.sel(time=eval_times)
-        clear_attrs(eval_ds)
-        eval_ds.to_zarr(
-            os.path.join(EVAL_DATA_DIR, f"eval.zarr"),
-            mode="w",
-            encoding=encoding,
-            zarr_version=2 # fix working with Blosc compresssor
-        )
-        test_ds = self.master_ds.sel(time=test_times)
-        clear_attrs(test_ds)
-        test_ds.to_zarr(
-            os.path.join(TEST_DATA_DIR, f"test.zarr"),
-            mode="w",
-            encoding=encoding,
-            zarr_version=2 # fix working with Blosc compresssor
-        )
+        def save_split(split_times, OUT_DATA_DIR, fname: str):
+            split_ds = self.master_ds.sel(time=split_times)
+            # ALLOWS BATCHING
+            split_ds = split_ds.chunk({ "time": 64, "y": -1, "x": -1 }) # -1 = full dim length    
+            clear_attrs(split_ds)
+            split_ds.to_zarr(
+                os.path.join(OUT_DATA_DIR, fname),
+                mode="w"
+            )
+            return split_ds
+        
+        print("Detaching sub-basement level 7 from core modules")
+
+        train_ds = save_split(train_times, TRAIN_DATA_DIR, "train.zarr")
+        _ = save_split(eval_times,  EVAL_DATA_DIR,  "eval.zarr")
+        _ = save_split(test_times,  TEST_DATA_DIR,  "test.zarr")
+
         print(f"Saved splits to .zarrs <3")
         print("--- TRAIN DATASET ---")
         for d in train_ds.dims:
@@ -280,18 +286,7 @@ class FeatureGrid:
 
         # --- DERIVED FEATURES AND LABELS
         print(f"[FeatureGrid] Deriving anti-arson techniques through feature derivation..")
-        # self.master_ds = self.master_ds.chunk({"time": 30, "y": 145, "x": 107})
         self._apply_derived()
-
-        # --- sanity crop
-        # print(f"[FeatureGrid] Cuttin' da cheese..")
-        # for var in self.master_ds.data_vars:
-        #     da = self.master_ds[var]
-        #     if "x" in da.dims and "y" in da.dims:
-        #         da = da.sel(x=slice(self.grid.attrs['x_min'], self.grid.attrs['x_max']), 
-        #                     y=slice(self.grid.attrs['y_min'], self.grid.attrs['y_max']))
-        #         self.master_ds[var] = da
-
 
         # --- mask >> normalize >> save to .zarr
         print(f"[FeatureGrid] Reversing polarity of the of the anti-polarity reverser...")

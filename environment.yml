@@ -30,5 +30,5 @@ dependencies:
   - seaborn
   - earthaccess
   - numcodecs
-  - zarr
+  - zarr=2.*
   - pip # keep pip available for any extras
