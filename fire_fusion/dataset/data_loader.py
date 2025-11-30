@@ -18,7 +18,7 @@ class FireDataset(IterableDataset):
         self,
         data: xr.Dataset,
         device: torch.device | None,
-        batch_size: int = 32,
+        batch_size: int = 8,
         shuffle: bool = True,
     ):
         super().__init__()
@@ -49,6 +49,9 @@ class FireDataset(IterableDataset):
 
         # for f in self.ds.data_vars:
         #     print(f"Feature: {f}, dims: {self.ds[f].dims}, shape:{np.array(self.ds[f].data).shape}")
+
+    def __len__(self) -> int:
+        return np.ceil(self.n_samples / self.batch_size)
 
     def __iter__(self):
         rng = np.random.default_rng()
