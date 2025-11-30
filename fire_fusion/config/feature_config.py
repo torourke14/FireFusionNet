@@ -9,7 +9,8 @@ from xarray.core.types import InterpOptions
 CAUSAL_CLASSES = [
     "NATURAL_LIGHTNING",
     "HUMAN",
-    "INDUSTRIAL"
+    "INDUSTRIAL",
+    "DEBRIS"
 ]
 
 CAUSE_RAW_MAP = {
@@ -35,14 +36,16 @@ CAUSE_RAW_MAP = {
     ],
     "INDUSTRIAL": [
         "2", # equip/vehicle use
-        "5", # debris burning
         "6", # railroad
         "9", # misc
-        "debris burning", "debris/open burning", "debris",
         "equip/vehicle use", "equipment", "equipment use",
         "powgen/trans/distrib",
         "railroad", "utilities", "vehicle",
     ],
+    "DEBRIS": {
+        "5", # debris burning
+        "debris burning", "debris/open burning", "debris"
+    },
     "UNKNOWN": [
         "0",
         "cause not identified",
@@ -121,7 +124,16 @@ def base_feat_config():
                 key = "Fire_Perimeter",
                 # NO TIME INTERPOLATION
                 # dropped
-            )  
+            ),
+            Feature(
+                name = "usfs_KDE",
+                # KDE names === "kde_[burn cause]"
+                # expand_names=["KDE_lightning", "KDE_human", "KDE_industrial", "KDE_debris"]
+                key = "Fire_KDE",
+                kde_max_radius_m = 10000,
+                ds_norms = ["z_score"]
+                # NO TIME INTERPOLATION
+            ),
         ],
         "MODIS": [
             Feature(
@@ -144,11 +156,12 @@ def base_feat_config():
             ),
             Feature(
                 name = "modis_ndvi", # step function holds values for dropoffs (fires)
+                expand_names = ["modis_ndvi", "modis_water_mask"],
                 key = "MOD13Q1",
                 # simple reprojection
                 resampling = Resampling.nearest,
-                # Ensure sharp dropoffs are captured
-                time_interp = ("existing", "nearest"),
+                # forward fill in proc_modis
+                # time_interp = ("existing", "nearest"),
                 # dropped
             ),
         ],
@@ -176,23 +189,17 @@ def base_feat_config():
                 time_interp = ("broadcast", "linear"),
                 # dropped
             ),
-            Feature(
-                is_mask=True,
-                name = "water_mask",
-                key = "_EVC",
-                resampling = Resampling.nearest,
-                time_interp = ("broadcast", "linear")
-            )
         ],
         "NLCD": [
-            # Feature(
-            #     name = "lcov_class",
-            #     key = "LndCov",
-            #     resampling = Resampling.nearest,
-            #     time_interp = ("broadcast", "linear"),
-            #     num_classes = 9,
-            #     one_hot_encode = True
-            # ),
+            Feature(
+                name = "lcov_class",
+                key = "LndCov",
+                resampling = Resampling.nearest,
+                time_interp = ("broadcast", "nearest"),
+                num_classes = 9,
+                one_hot_encode = True
+                # dropped
+            ),
             Feature(
                 name = "frac_imp_surface",
                 key = "FctImp",
@@ -281,6 +288,7 @@ def base_feat_config():
 def drv_feat_config() -> List[Feature]:
     """ SEQUENTIAL list of features to derive """
     return [
+        # Fire/Masks
         Feature(name="ign_next", is_label=True, 
             func="build_ignition_next",
             inputs=["modis_burn", "usfs_burn", "usfs_perimeter"],
@@ -304,9 +312,20 @@ def drv_feat_config() -> List[Feature]:
             inputs=["usfs_burn_cause", "ign_next"],
             drop_inputs=["usfs_burn_cause"],
         ),
-        
-
-
+        Feature(name="water_mask", is_mask=True,
+            func="build_water_mask",
+            inputs=["modis_water_mask"],
+            drop_inputs=["modis_water_mask"],
+        ),
+        # Derivations
+        Feature(
+            name = "ndvi_anomaly",
+            func = "build_ndvi_anomaly",
+            inputs=["modis_ndvi"],
+            drop_inputs=["modis_ndvi"],
+            ds_clip=(-0.1, 1.0),
+            ds_norms = ["z_score"],
+        ),
         Feature(expand_names = ["precip_2d", "precip_5d"],
             func = "build_precip_cum",
             inputs=["precip_mm"], drop_inputs = None,
@@ -322,14 +341,7 @@ def drv_feat_config() -> List[Feature]:
             inputs=["aspect"],
             drop_inputs=["aspect"],
         ),
-        Feature(
-            name = "ndvi_anomaly",
-            func = "build_ndvi_anomaly",
-            inputs=["modis_ndvi"],
-            drop_inputs=["modis_ndvi"],
-            ds_clip=(-0.1, 1.0),
-            ds_norms = ["z_score"],
-        ),
+        # indexes
         Feature(
             name = "fosberg_fwi",
             func = 'build_ffwi',
