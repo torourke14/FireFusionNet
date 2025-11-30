@@ -1,3 +1,4 @@
+import math
 import torch
 from torch.utils.data import IterableDataset
 import numpy as np
@@ -51,7 +52,7 @@ class FireDataset(IterableDataset):
         #     print(f"Feature: {f}, dims: {self.ds[f].dims}, shape:{np.array(self.ds[f].data).shape}")
 
     def __len__(self) -> int:
-        return np.ceil(self.n_samples / self.batch_size)
+        return math.ceil(self.n_samples / self.batch_size)
 
     def __iter__(self):
         rng = np.random.default_rng()
