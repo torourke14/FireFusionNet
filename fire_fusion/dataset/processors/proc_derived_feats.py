@@ -189,14 +189,12 @@ class DerivedProcessor:
 
         return doy_sin
     
-    # def build_wui(self,
-    #     pop_norm: xr.DataArray, 
-    #     lcov_class: xr.DataArray,
-    #     wildland_ixs = [4, 5, 7]
-    # ) -> xr.DataArray:
+    # def build_wui_index(self, subds: xr.Dataset, name: str, wildland_ixs = [4, 5, 7]) -> xr.DataArray:
     #     """
     #         WUI = 1 if any wildlife class
     #     """
+    #     pop_norm: xr.DataArray = subds["pop_density"]
+    #     lcov_class: xr.DataArray = subds["lcov_class"]
     #     wild_ohe = lcov_class[..., list(wildland_ixs)]
 
     #     # Reduce over the ohe to get a [0, 1] wildland value on 2d grid
@@ -205,9 +203,8 @@ class DerivedProcessor:
     #     # population is HEAVILY skewed towards cities
     #     # add sigmoid to norm'd population to further smooth out non-linearity
     #     # smoothed WUI as sigmopoid of norm'd population * wildland mask
-
     #     wui_smooth = wildland_mask * (1.0 / (1.0 + np.exp(-1.0 * pop_norm)))
-    #     wui_smooth.name = "wui_smooth"
+    #     wui_smooth.name = name
     #     return wui_smooth
         
     

@@ -150,6 +150,8 @@ class Modis(Processor):
         stacked_ndvi = stacked_ndvi.resample(time="1D").ffill().sel(time=slice(ys, ye))
         stacked_wmask = stacked_wmask.resample(time="1D").ffill().sel(time=slice(ys, ye))
 
+        assert f_cfg.expand_names is not None, "expected f_cfg.expand_names"
+
         return xr.Dataset(data_vars={
             f_cfg.expand_names[0]: stacked_ndvi,
             f_cfg.expand_names[1]: stacked_wmask

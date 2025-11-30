@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 from typing import List, Tuple
-from pyproj import CRS, Transformer
+from pyproj import Transformer
 from xarray.core.types import InterpOptions
 
 from fire_fusion.config.feature_config import Feature
@@ -15,12 +15,19 @@ class Processor:
         self.cfg = cfg
         self.gridref = gridref
         self.mCRS = gridref.rio.crs
+        self.transformer = self.gridref.rio.transform()
 
     def build_feature(self, f_config: Feature) -> xr.Dataset:
         """ - Read necessary files based on the feature key,
             - route to corresponding functions to process
         """
         raise NotImplementedError
+
+
+    def _get_px_size_m(self) -> float:
+        px_size_x = abs(self.transformer.a) # width/lon
+        px_size_y = abs(self.transformer.e) # height/lat
+        return (abs(px_size_x) + abs(px_size_y)) / 2.0
 
 
     def _preclip_grid_fn(self, obj: xr.DataArray, px_m = 3, deg_m = 0.05) -> xr.DataArray:
@@ -40,7 +47,7 @@ class Processor:
         minx, miny = self.gridref.attrs['x_min'], self.gridref.attrs['y_min']
         maxx, maxy = self.gridref.attrs['x_max'], self.gridref.attrs['y_max']
         
-        if obj.rio.crs != self.gridref.rio.crs:
+        if obj.rio.crs != self.mCRS:
             transformation = Transformer.from_crs(
                 crs_from = self.gridref.rio.crs, 
                 crs_to   = obj.rio.crs,
@@ -68,11 +75,10 @@ class Processor:
             minx=minx-mx, maxx=maxx+mx,
             miny=miny-my, maxy=maxy+my
         )
-        obj = obj.rio.write_crs(self.gridref.rio.crs)
-        obj = obj.rio.write_transform(self.gridref.rio.transform())
+        obj = obj.rio.write_crs(self.mCRS)
+        obj = obj.rio.write_transform(self.transformer)
         return obj
     
-
     def _preclip_native_arr(self, obj: xr.DataArray) -> xr.DataArray:
         # print("preclipping native array")
         return self._preclip_grid_fn(obj)
@@ -88,6 +94,7 @@ class Processor:
         return ds
 
 
+
     def _reproject_to_mgrid_fn(self, obj: xr.DataArray, resample_type) -> xr.DataArray:
         """ Don't call me. Call _reproject_arr_to_mgrid OR _reproject_dataset_to_mgrid """
         if not resample_type:
@@ -95,9 +102,8 @@ class Processor:
         else:
            obj = obj.rio.reproject_match(self.gridref, resampling=resample_type)
 
-        obj = obj.rio.write_crs(self.gridref.rio.crs)
+        obj = obj.rio.write_crs(self.mCRS)
         return obj
-
 
     def _reproject_arr_to_mgrid(self, obj: xr.DataArray, resample_type) -> xr.DataArray:
         return self._reproject_to_mgrid_fn(obj, resample_type)

@@ -1,6 +1,8 @@
-## Citation & Links
-
-When using this workflow with LANDFIRE and NLCD data, please cite:
+#### File Loaders
+- [xr.open_dataset](https://xarray.pydata.org/en/v2023.08.0/generated/xarray.open_dataset.html)
+- [rasterio.open](https://rasterio.readthedocs.io/en/stable/topics/reading.html)
+- [rioxarray.open_rasterio](https://corteva.github.io/rioxarray/html/rioxarray.html)
+- [geopandas.read_file](https://geopandas.org/en/v1.1.0/docs/reference/api/geopandas.read_file.html)
 
 
 #### USFS Fire Layers
@@ -10,7 +12,42 @@ When using this workflow with LANDFIRE and NLCD data, please cite:
 
 
 #### USDA Wildlife-Urban-Interface (WUI)
-- [Docs/Meta](https://www.fs.usda.gov/rds/archive/catalog/RDS-2015-0012-3)
+- [Download](https://www.fs.usda.gov/rds/archive/catalog/RDS-2015-0012-3)
+- [Metadata](https://www.fs.usda.gov/rds/archive/products/RDS-2015-0012-4/_metadata_RDS-2015-0012-4.html)
+  - **WUIFLAG{year}:**
+    - 0: non-WUI
+    - 1: intermix
+    - 2: interface
+  - **WUICLASS{year}:**
+    - **Value:** Water
+    - Definition: open water
+    - **Value:** Med_Dens_Interface
+    - Definition: housing density between 49.42108 and 741.3162 and wildland vegetation <= 50% and within 2.414 km of area with >= 75% wildland vegetation
+    - **Value:** High_Dens_Intermix
+    - Definition: housing density >= 741.3162 and wildland vegetation > 50%
+    - **Value:** Low_Dens_Interface
+    - Definition: housing density between 6.177635 and 49.42108 and wildland vegetation <= 50% and within 2.414 km of area with >= 75% wildland vegetation
+    - **Value:** Med_Dens_Intermix
+    - Definition: housing density between 49.42108 and 741.3162 and wildland vegetation > 50%
+    - **Value:** Low_Dens_NoVeg
+    - Definition: housing density between 6.177635 and 49.42108 and wildland vegetation <= 50%
+    - **Value:** Med_Dens_NoVeg
+    - Definition: housing density between 49.42108 and 741.3162 and wildland vegetation <= 50%
+    - **Value:** Uninhabited_NoVeg
+    - Definition: housing density = 0 and wildland vegetation <= 50%
+    - **Value:** Low_Dens_Intermix
+    - Definition: housing density between 6.177635 and 49.42108 and wildland vegetation > 50%
+    - **Value:** High_Dens_Interface
+    - Definition: housing density >= 741.3162 and wildland vegetation <= 50% and within 2.414 km of area with >= 75% wildland vegetation
+    - **Value:** Very_Low_Dens_Veg
+    - Definition: housing density < 6.177635 and wildland vegetation > 50%
+    - **Value:** Uninhabited_Veg
+    - Definition: housing density = 0 and wildland vegetation > 50%
+    - **Value:** Very_Low_Dens_NoVeg
+    - Definition:housing density < 6.177635 and wildland vegetation <= 50%
+    - **Value:** High_Dens_NoVeg
+    - Definition:housing density >= 741.3162 and wildland vegetation <= 50%
+
 
 #### MODIS:
 - [earthaccess API](https://earthaccess.readthedocs.io/en/latest/user-reference/api/api/#earthaccess.api.download)
