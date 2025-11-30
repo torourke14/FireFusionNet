@@ -193,20 +193,26 @@ class FeatureGrid:
         print(f"- dims: {self.master_ds.dims}")
 
     
-    def _save_splits_to_zarr(self, split=(0.6, 0.2, 0.2)) -> None:
+    def _save_splits_to_zarr(self, 
+        train_yrs=(2009, 2016),
+        eval_yrs=(2017, 2018),
+        test_yrs=(2019, 2020),
+    ) -> None:
         print("Spraying neutrino stabilization goo in sub-basement level 7...")
 
-        assert (sum(split) - 1.0) < 1e-6, f"splits must equal 1.0"
+        def yrs_to_d(y1: int, y2: int): return (f"{y1}-01-01", f"{y2}-12-31")
+ 
+        t = self.master_ds.time
+        years = t.dt.year.values
+        times = t.values
 
-        times = self.master_ds.time.values
-        n = len(times)
+        train_mask = (years >= train_yrs[0]) & (years <= train_yrs[1])
+        eval_mask  = (years >= eval_yrs[0]) & (years <= eval_yrs[1])
+        test_mask  = (years >= test_yrs[0]) & (years <= test_yrs[1])
 
-        n_train = int(n * split[0])
-        n_eval  = int(n * split[1])
-
-        train_times = times[:n_train]
-        eval_times  = times[n_train : n_train+n_eval]
-        test_times  = times[n_train+n_eval:]
+        train_times = times[train_mask]
+        eval_times  = times[eval_mask]
+        test_times  = times[test_mask]
 
         print("Detaching sub-basement level 7 from core modules")
         compressor = Blosc(cname="zstd", clevel=5, shuffle=Blosc.BITSHUFFLE)
@@ -367,9 +373,8 @@ class FeatureGrid:
 if __name__ == "__main__":
     feature_dataset = FeatureGrid(
         mode = "build",
-        start_date="2000-01-01", 
-        end_date="2020-12-31",
-        resolution = 3000,
+        start_date="2009-01-01", end_date="2020-12-31",
+        resolution = 2000,
         lat_bounds = (45.5, 49.0),
-        lon_bounds = (-124.8, -117.0),
+        lon_bounds = (-122.5, -117.0),
     )
