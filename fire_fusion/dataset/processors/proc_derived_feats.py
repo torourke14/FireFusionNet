@@ -16,7 +16,6 @@ class DerivedProcessor:
             3. Label = NO BURN @T=t >> BURN @T=t+1
         """
         burning_t = (
-            (subds["modis_burn"].fillna(0) > 0) | 
             (subds["usfs_burn"].fillna(0) > 0) | 
             (subds["usfs_perimeter"].fillna(0) > 0)
         )
@@ -27,7 +26,6 @@ class DerivedProcessor:
     
     def build_act_fire_mask(self, subds: xr.Dataset, name: str) -> xr.DataArray:
         burning_t = (
-            (subds["modis_burn"].fillna(0) > 0) | 
             (subds["usfs_burn"].fillna(0) > 0) | 
             (subds["usfs_perimeter"].fillna(0) > 0)
         )
@@ -40,7 +38,6 @@ class DerivedProcessor:
             (ie, is there an active fire next to me?)
         """
         burning_t = (
-            (subds["modis_burn"].fillna(0) > 0) | 
             (subds["usfs_burn"].fillna(0) > 0) | 
             (subds["usfs_perimeter"].fillna(0) > 0)
         )
