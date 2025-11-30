@@ -55,6 +55,36 @@ CAUSE_RAW_MAP = {
     ],
 }
 
+WUI_CLASSES = {
+    "UNINHABITED_WATER",
+    "RURAL",
+    "NOWUI_URBAN",
+    "WUI_INTERMIX",
+    "WUI_INTERFACE"
+}
+
+WUI_CLASS_MAP: dict[str, int] = {
+    # uninhabited
+    "Uninhabited_Veg": 0,
+    "Uninhabited_NoVeg": 0,
+    "Water": 0,
+    # low density (rural)
+    "Very_Low_Dens_Veg": 1,
+    "Very_Low_Dens_NoVeg": 1,
+    # non-WUI urban / town (built, no veg)
+    "Low_Dens_NoVeg": 2,
+    "Med_Dens_NoVeg": 2,
+    "High_Dens_NoVeg": 2,
+    # WUI intermix
+    "Low_Dens_Intermix": 3,
+    "Med_Dens_Intermix": 3,
+    "High_Dens_Intermix": 3,
+    # WUI interface
+    "Low_Dens_Interface": 4,
+    "Med_Dens_Interface": 4,
+    "High_Dens_Interface": 4,
+}
+
 LAND_COVER_RAW_MAP = {
     0: [11], # water
     1: [12], # snow
@@ -80,7 +110,7 @@ class Feature:
 
     # Special attrs
     kde_max_radius_m: Optional[float] = 10000
-    expand_names: List[str] = [] # names of new features base feature is expanded into
+    expand_names: Optional[List[str]] = None # names of new features base feature is expanded into
     
     # labels and masks
     inputs: Optional[List[str]] = None
@@ -135,6 +165,26 @@ def base_feat_config():
                 # NO TIME INTERPOLATION
             ),
         ],
+        "USDA_WUI": [
+            Feature(
+                name = "hs_density",
+                key = "hs_density",
+                time_interp = ("existing", "linear"),
+                ds_norms = ["z_score"]
+            ),
+            Feature(
+                name = "wui_index",
+                key = "wui_index",
+                time_interp = ("existing", "linear"),
+                ds_norms = ["z_score"]
+            ),
+            Feature(
+                name = "dist_to_wui_interface",
+                key = "dist_to_interface",
+                time_interp = ("existing", "linear"),
+                ds_norms = ["z_score"]
+            )
+        ],
         "MODIS": [
             Feature(
                 name = "modis_burn",
@@ -155,7 +205,7 @@ def base_feat_config():
                 ds_norms = ["z_score"],
             ),
             Feature(
-                name = "modis_ndvi", # step function holds values for dropoffs (fires)
+                name = "mod13q1", # step function holds values for dropoffs (fires)
                 expand_names = ["modis_ndvi", "modis_water_mask"],
                 key = "MOD13Q1",
                 # simple reprojection
@@ -325,6 +375,11 @@ def drv_feat_config() -> List[Feature]:
             drop_inputs=["modis_ndvi"],
             ds_clip=(-0.1, 1.0),
             ds_norms = ["z_score"],
+        ),
+        Feature(name="wui_index",
+            func="build_valid_cause_mask",
+            inputs=["lcov_class", "pop_density"],
+            drop_inputs=["usfs_burn_cause"],
         ),
         Feature(expand_names = ["precip_2d", "precip_5d"],
             func = "build_precip_cum",

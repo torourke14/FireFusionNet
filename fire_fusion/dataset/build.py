@@ -25,11 +25,13 @@ from .processors.proc_modis import Modis
 from .processors.proc_nlcd import NLCD
 from .processors.proc_usfs import UsfsFire
 from .processors.proc_croads import CensusRoads
+from .processors.proc_usda import UsdaWui
 
 xr.set_options(use_new_combine_kwarg_defaults=True)
 
 PROC_CLASSES = {
     "CENSUSROADS": CensusRoads,
+    "USDA_WUI": UsdaWui,
     "FIRE_USFS": UsfsFire,
     "GPW": GPW,
     "GRIDMET": GridMet,

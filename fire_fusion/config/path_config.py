@@ -17,7 +17,7 @@ CROADS_DIR      = RAW_DATA_DIR / "census_roads" / "downloaded"
 USFS_DIR        = RAW_DATA_DIR / "fire_usfs" / "downloaded"
 GRIDMET_DIR     = RAW_DATA_DIR / "gridmet" / "downloaded"
 MODIS_DIR       = RAW_DATA_DIR / "modis" / "fetched"
-CDS_DIR         = RAW_DATA_DIR / "cds" / "fetched"
+USDA_DIR        = RAW_DATA_DIR / "usda" / "downloaded"
 
 MODEL_SAVE_DIR = FF_ROOT / "model" / "saved"
 PLOTS_DIR = FF_ROOT / "analysis" / "plots"
