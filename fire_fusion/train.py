@@ -13,7 +13,7 @@ from time import perf_counter
 from .dataset.build import FeatureGrid
 from .model.model import FireFusionModel
 from .analysis.metrics import MetricsManager
-from .model.model_utils import (
+from .train_utils import (
     estimate_model_size_mb, set_global_seed, get_device_config, 
     save_model, WarmupCosineAnnealingLR
 )

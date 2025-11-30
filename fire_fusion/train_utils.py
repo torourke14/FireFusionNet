@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 
-from ..config.path_config import MODEL_SAVE_DIR
+from .config.path_config import MODEL_SAVE_DIR
 
 
 def estimate_model_size_mb(model: torch.nn.Module) -> float:
