@@ -94,15 +94,21 @@ class DerivedProcessor:
         return water_mask
 
 
-
     # -- Other Features ---------------------------------------------------------------------------
+    def build_ndvi_anomaly(self, subds: xr.Dataset, name: str) -> xr.DataArray:
+        ndvi_by_doy = subds['modis_ndvi'].groupby("time.dayofyear")
+        ndvi_anom = ndvi_by_doy - ndvi_by_doy.mean("time")
+        ndvi_anom.name = name
+        return ndvi_anom
+    
+
+
     def build_precip_cum(self, subds: xr.Dataset, names: List[str]) -> xr.Dataset:
         p2d = subds['precip_mm'].rolling(time=2, min_periods=1, center=False).sum().fillna(0)
         p5d = subds['precip_mm'].rolling(time=5, min_periods=1, center=False).sum().fillna(0)
 
         return xr.Dataset({ names[0]: p2d, names[0]: p5d })
          
-    
     def build_wind_ew_ns(self, subds: xr.Dataset, names: List[str]) -> xr.Dataset:
         rads = xr.apply_ufunc(np.deg2rad, subds["wind_dir"])
         val_ew = - xr.apply_ufunc(np.sin, rads).astype("float32")
@@ -118,12 +124,6 @@ class DerivedProcessor:
         return xr.Dataset({ names[0]:val_ew, names[1]:val_ns })
     
 
-    def build_ndvi_anomaly(self, subds: xr.Dataset, name: str) -> xr.DataArray:
-        ndvi_by_doy = subds['modis_ndvi'].groupby("time.dayofyear")
-        ndvi_anom = ndvi_by_doy - ndvi_by_doy.mean("time")
-        ndvi_anom.name = name
-        return ndvi_anom
-    
 
     def build_ffwi(self, subds: xr.Dataset, name: str) -> xr.DataArray:
         """
@@ -153,41 +153,37 @@ class DerivedProcessor:
         ffwi.name = name
         return ffwi
         
+
+
     def build_doy_sin(self, subds: xr.Dataset, name: str, gridref: xr.DataArray) -> xr.DataArray:
         """ NOTE: Used LLM for help debugging this function"""
 
-        # 1. Get time index from the dataset
-        time_index = pd.DatetimeIndex(subds.indexes["time"])   # shape: (T,)
-
-        # 2. Day-of-year as plain numpy array
+        # time index to numpy
+        time_index = pd.DatetimeIndex(subds.indexes["time"])
         doy = time_index.dayofyear.to_numpy(dtype="float32")
 
-        # 3. Sine encoding on [0, 2π)
-        phase = 2.0 * np.pi * (doy - 1.0) / 365.0              # shape: (T,)
-        time_signal = np.sin(phase).astype("float32")          # shape: (T,)
+        # sin encoding on 0, 2pi
+        phase = 2.0 * np.pi * (doy - 1.0) / 365.0
+        time_signal = np.sin(phase).astype("float32")
 
-        # 4. Broadcast over spatial grid
+        # Broadcast over spatial grid
         ny = gridref.sizes["y"]
         nx = gridref.sizes["x"]
-
         data = np.broadcast_to(
-            time_signal[:, None, None],                        # (T,1,1) → (T,ny,nx)
-            (len(time_index), ny, nx),
+            time_signal[:, None, None], 
+            shape=(len(time_index), ny, nx)
         ).astype("float32")
 
-        # 5. Wrap as DataArray with (time, y, x)
-        doy_sin = xr.DataArray(
+        # Wrap as T, Y, X feature
+        return xr.DataArray(
             data=data,
             dims=("time", "y", "x"),
             coords={
                 "time": time_index,
-                "y": gridref["y"].values,
-                "x": gridref["x"].values,
+                "y": gridref["y"].values, "x": gridref["x"].values,
             },
             name=name,
         )
-
-        return doy_sin
     
     # def build_wui_index(self, subds: xr.Dataset, name: str, wildland_ixs = [4, 5, 7]) -> xr.DataArray:
     #     """

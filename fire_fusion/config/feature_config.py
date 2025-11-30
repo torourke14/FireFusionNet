@@ -376,11 +376,6 @@ def drv_feat_config() -> List[Feature]:
             ds_clip=(-0.1, 1.0),
             ds_norms = ["z_score"],
         ),
-        Feature(name="wui_index",
-            func="build_valid_cause_mask",
-            inputs=["lcov_class", "pop_density"],
-            drop_inputs=["usfs_burn_cause"],
-        ),
         Feature(expand_names = ["precip_2d", "precip_5d"],
             func = "build_precip_cum",
             inputs=["precip_mm"], drop_inputs = None,
@@ -396,13 +391,14 @@ def drv_feat_config() -> List[Feature]:
             inputs=["aspect"],
             drop_inputs=["aspect"],
         ),
-        # indexes
         Feature(
             name = "fosberg_fwi",
             func = 'build_ffwi',
             inputs=["temp_avg", "rel_humidity", "wind_mph"],
             ds_norms = ["z_score"],
         ),
+        # indexes
+        
         Feature(
             name = "doy_sin",
             func="build_doy_sin",
