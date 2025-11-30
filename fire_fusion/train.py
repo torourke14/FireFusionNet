@@ -4,6 +4,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.amp.autocast_mode import autocast
 
+import json
 import numpy as np
 from typing import Literal, Tuple, Dict
 from tqdm import tqdm
@@ -192,7 +193,7 @@ class WRMTrainer:
             all_logits = torch.cat(ign_logits_record, dim=0)
             all_labels = torch.cat(ign_labels_record, dim=0)
 
-    def train(self):
+    def train(self, acc_goal = 0.7):
         self.optimizer = optim.AdamW(
             self.model.parameters(), 
             lr=self.base_lr, 
@@ -208,49 +209,51 @@ class WRMTrainer:
         print(f"Starting training with parameters:\n"
             f"- model size: {estimate_model_size_mb(self.model):.2f}mb\n",
             f"- epochs: {self.ep_warmup} (warmup) {self.ep_max} (total) {self.ep_early_stop} (early stop)\n",
-            f"- batch size: {batch_size}\n",
             f"- min lr: {self.min_lr}, base lr: {self.base_lr}, grad clip: {self.grad_clip}, weight decay: {self.weight_decay}\n",
         )
 
         time0 = perf_counter()
+        epochs_ran = 0
         for _ in range (1, self.ep_max + 1):
             self.train_epoch()
             self.eval_epoch()
 
             score, new_best, trn_last, val_last = self.mm.epoch_forward()
-            save_best = False 
+            save_best = False
+            epochs_ran += 1
 
             if self.mm.no_improve > self.ep_early_stop:
+                print(f"Stopped training for early stop")
                 break
                 
             if save_best:
                 print(f"You beat the goal!! Saving model\n")
                 save_model(self.model)
 
+
         elapsed_min = (perf_counter() - time0) // 60
         elapsed_sec = (perf_counter() - time0) % 60
         print(f"Finished training in {elapsed_min:.0f} min {elapsed_sec:.0f} sec")
-
         print(f"Best score @epoch {self.mm.best['epoch']} >> score: {self.mm.best['score']:.5f}")
 
         # Do some plotting and fun visualizations!
+        epochs_axis = list(range(1, epochs_ran + 1))
+
         trn_losses, val_losses = self.mm.get_history()
-
         trn_ignit_acc, trn_cause_acc = self.mm.trn_accuracies[0], self.mm.trn_accuracies[1]
-
         val_ignit_acc, val_cause_acc = self.mm.val_accuracies[0], self.mm.val_accuracies[1]
         val_ignit_cm, val_cause_cm = self.mm.val_cm[0], self.mm.val_cm[1]
         last_ign_cm, runn_ign_cms, ign_cm_record = val_ignit_cm.get_history()
         last_cause_cm, runn_cause_cms, ign_cause_record = val_ignit_cm.get_history()
         
         # Train vs. Eval
-        plot_class_accuracy(epochs, val_ignit_acc, val_cause_acc, trn_ignit_acc, trn_cause_acc, save=True)
-        plot_loss_curves(epochs, trn_losses, val_losses, save=True)
+        plot_class_accuracy(epochs_axis, val_ignit_acc, val_cause_acc, trn_ignit_acc, trn_cause_acc, save=True)
+        plot_loss_curves(epochs_axis, trn_losses, val_losses, save=True)
         
         # --- Validation sets ---
         # CM rates per epoch per class
-        plot_rates_per_epoch(epochs, runn_ign_cms, save=True)
-        plot_rates_per_epoch(epochs, runn_cause_cms, save=True)
+        plot_rates_per_epoch(epochs_axis, runn_ign_cms, save=True)
+        plot_rates_per_epoch(epochs_axis, runn_cause_cms, save=True)
 
     def test(self):
         return

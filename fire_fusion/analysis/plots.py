@@ -4,14 +4,6 @@ from matplotlib.colors import ListedColormap
 import numpy as np
 from sklearn.calibration import calibration_curve
 import torch
-from sklearn.metrics import (
-    average_precision_score,
-    confusion_matrix,
-    accuracy_score,
-    jaccard_score,
-    precision_recall_fscore_support,
-    roc_auc_score,
-)
 
 from .metrics import Accuracy
 
@@ -19,7 +11,7 @@ from ..config.path_config import PLOTS_DIR
 
 
 def plot_class_accuracy(
-    epochs: Tuple,
+    epochs: List,
     val_ignit_acc: Accuracy,
     val_cause_acc: Accuracy,
     trn_ignit_acc: Accuracy,
@@ -45,7 +37,7 @@ def plot_class_accuracy(
         plt.show()
 
 
-def plot_loss_curves(epochs: Tuple, trn_losses, val_losses, save: bool = True):
+def plot_loss_curves(epochs: List, trn_losses, val_losses, save: bool = True):
     plt.figure()
     plt.plot(epochs, trn_losses, label="Train loss")
     plt.plot(epochs, val_losses, label="Val loss")
@@ -63,7 +55,7 @@ def plot_loss_curves(epochs: Tuple, trn_losses, val_losses, save: bool = True):
         plt.show()
 
 
-def plot_rates_per_epoch(epochs: Tuple, rates: Tuple, save=True):
+def plot_rates_per_epoch(epochs: List, rates: Tuple, save=True):
     tpr, tnr, fpr, fnr = rates
 
     plt.figure()

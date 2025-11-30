@@ -51,15 +51,14 @@ class FeatureGrid:
     """
     def __init__(self,
         mode: Literal["build", "load"],
-        device = None,
         # required for loading
         batch_size = 4,
         num_workers = 0,
         pin_memory = True,
         load_datasets: List[Literal['train','eval','test']] = ["train", "eval"],
         # required for building
-        start_date = "2000-01-01", 
-        end_date = "2020-12-31",
+        start_date="2009-01-01",
+        end_date="2020-12-31",
         resolution: float = 4000,
         lat_bounds = (45.4, 49.1),
         lon_bounds = (-124.8, -117.0),
@@ -73,7 +72,7 @@ class FeatureGrid:
 
         if mode == "load":
             self.load_datasets = load_datasets
-            self.load_features(batch_size, device, num_workers, pin_memory)
+            self.load_features(batch_size, num_workers, pin_memory)
         else:
             self.time_index = pd.date_range(start_date, end_date, freq="D")
             
@@ -302,7 +301,7 @@ class FeatureGrid:
         self._save_splits_to_zarr()
 
 
-    def load_features(self, batch_size, device, num_workers, pin_memory) -> None:
+    def load_features(self, batch_size, num_workers, pin_memory) -> None:
         train_ds = xr.open_zarr(TRAIN_DATA_DIR / f"train.zarr")
 
         # handle class imbalance
@@ -333,7 +332,7 @@ class FeatureGrid:
         self.train_loader = DataLoader(
             dataset = FireDataset(
                 data = train_ds,
-                device = device,
+                device = None, # <-- Keep on CPU, move tensors to GPU in train_epoch/eval_epoch
                 batch_size = batch_size,
                 shuffle = True,
             ),
@@ -346,7 +345,7 @@ class FeatureGrid:
             self.eval_loader = DataLoader(
                 dataset = FireDataset(
                     data = xr.open_zarr(EVAL_DATA_DIR / f"eval.zarr"),
-                    device = device,
+                    device = None, # <-- Keep on CPU, move tensors to GPU in train_epoch/eval_epoch
                     batch_size = batch_size,
                     shuffle = False
                 ),
@@ -358,7 +357,7 @@ class FeatureGrid:
             self.test_loader = DataLoader(
                 dataset = FireDataset(
                     data = xr.open_zarr(TEST_DATA_DIR / f"test.zarr"),
-                    device = device,
+                    device = None, # <-- Keep on CPU, move tensors to GPU in train_epoch/eval_epoch
                     batch_size = batch_size,
                     shuffle = False
                 ),
