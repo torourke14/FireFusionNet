@@ -93,7 +93,7 @@ class DerivedProcessor:
 
     # -- Other Features ---------------------------------------------------------------------------
     def build_ndvi_anomaly(self, subds: xr.Dataset, name: str) -> xr.DataArray:
-        ndvi_by_doy = subds['modis_ndvi'].groupby("time.dayofyear")
+        ndvi_by_doy = subds['ndvi'].groupby("time.dayofyear")
         ndvi_anom = ndvi_by_doy - ndvi_by_doy.mean("time")
         ndvi_anom.name = name
         return ndvi_anom

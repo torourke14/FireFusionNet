@@ -311,7 +311,7 @@ class Modis(Processor):
 
         # replace "never seen" values (-1) to "total months in the record"
         # (conservative estimate of months since last burn)
-        total_months = months_since.sizes["time"].astype("uint8")
+        total_months = months_since.sizes["time"]
         sentinel_value = np.int16(total_months)
 
         months_since = months_since.where(months_since >= 0, other=sentinel_value)
