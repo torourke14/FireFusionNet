@@ -60,7 +60,7 @@ class Modis(Processor):
                 print(f"[LAADS] Staring at the shiny objects")
                 requests = {
                     executor.submit(self._fetch_burns, f_cfg, yr): yr 
-                    for yr in self.gridref.attrs['years']
+                    for yr in list(range(2000, 2020 + 1))
                 }
             
             for req in as_completed(requests):
@@ -73,6 +73,11 @@ class Modis(Processor):
 
                 except Exception as e:
                     print(f"[LAADS] Satellite tried to load data for {yr}, epic fail! --> {e}\n\n")
+
+
+        ### -- compute months since last burn -- ###
+        if f_cfg.key == "MCD64A1" and len(feature_by_yr.data_vars) > 0:
+            feature_by_yr = self._aggregate_burns(feature_by_yr, f_cfg)
 
         # -----------------------------------------------------------------------
         return self._time_interpolate(
@@ -158,6 +163,7 @@ class Modis(Processor):
         })
         
     
+    
     def _fetch_lai(self, f_cfg: Feature, year: int) -> xr.Dataset | None:
         nc_files = self._fetch_year(f_cfg.key or "", year)
         if len(nc_files) == 0:
@@ -211,15 +217,17 @@ class Modis(Processor):
         return stacked.to_dataset(name=f_cfg.name)
     
 
+
     def _fetch_burns(self, f_cfg: Feature, year: int) -> xr.Dataset | None:
         nc_files = self._fetch_year(f_cfg.key or "", year)
         if len(nc_files) == 0:
             return None
         
-        burn_doys: xr.DataArray | None = None
+        monthly_burn_flags: List[xr.DataArray] = []
         for fp in nc_files:
             ts = pd.Timestamp(self._parse_date(str(fp.name)))
             # print(f"[LAADS] Parsing {fp.stem} --> {ts}")
+            month_start = pd.Timestamp(ts.year, ts.month, 1)
 
             with load_as_xdataset(file=fp, variables=["Burn Date", "QA"]) as raw:
                 if len(raw.data_vars.items()) == 0:
@@ -236,34 +244,88 @@ class Modis(Processor):
                 burn = burn.where(land_valid)
                 burn = burn.where((burn >= 1) & (burn <= 366)) # -1/-2 = bad val
                 
-                # keep existing value (earlier in the year), fill only where NaN
-                if burn_doys is None:
-                    burn_doys = burn
-                else:
-                    burn_doys = xr.where(burn_doys.notnull(), burn_doys, burn)
+                burned_flag = burn.notnull().astype("uint8")
 
-        if burn_doys is None:
+            burned_flag = burned_flag.expand_dims(time=[month_start])
+            monthly_burn_flags.append(burned_flag)
+
+        if len(monthly_burn_flags) == 0:
             return None
         
-        """ NOTE: ChatGPT helped synthesize dates here """
-        time_index = pd.date_range(
-            datetime(year, 1, 1), datetime(year, 12, 31),
-            freq="D"
+        burned_monthly = (xr.concat(monthly_burn_flags, dim="time")
+            .sortby("time").groupby("time").max("time")
+            .astype("uint8")
         )
+        burned_monthly.name = f_cfg.name
+
+        return burned_monthly.to_dataset(name=f_cfg.name)
+
+    def _aggregate_burns(self, burn_da: xr.Dataset, f_cfg: Feature) -> xr.Dataset:
+        burn_flag = burn_da[f_cfg.name].sortby("time").fillna(0).astype("uint8")
+
+        # Create a grid of months, from first to last month
+        # Missing months == 0 "no burn"
+        time_min = pd.to_datetime(burn_flag.time.min().values)
+        time_max = pd.to_datetime(burn_flag.time.max().values)
         
-        doy_axis = xr.DataArray(
-            np.arange(1, len(time_index) + 1, dtype="int16"),
-            coords={ "time":time_index },
-            dims=("time",)
+        full_time = pd.date_range(
+            start=pd.Timestamp(time_min.year, time_min.month, 1), 
+            end  =pd.Timestamp(time_max.year, time_max.month, 1), 
+            freq="MS"
         )
 
-        # Broadcast to (time, y, x)
-        doy_axis_3d, burn_doy_3d = xr.broadcast(doy_axis, burn_doys)
-        burn_daily = (burn_doy_3d == doy_axis_3d).astype("float32")
-        burn_daily.name = f_cfg.name
+        # reindex burn flags over monthly index
+        monthly_burn_flag = burn_flag.reindex(time=full_time, fill_value=0) # type: ignore
 
-        return burn_daily.to_dataset(name=f_cfg.name)
-        """ --------------------------------------------------------------"""
+        # -1 : never burned yet, up to the month
+        # 0  : burned this month
+        # 1  : burned last month
+        # 2+ : burned further in the past
+        def _months_since_last_burn_1d(burn_1d: np.ndarray) -> np.ndarray:
+            # last_burns = [0, 0, 0, ..., 1, 2, 3, 4, 5, ..., 0]
+            out = np.empty_like(burn_1d, dtype=np.int16)
+            last_seen = -1
+
+            for i, val in enumerate(burn_1d):
+                if val >= 1: # reset counter
+                    last_seen = 0
+                    out[i] = 0
+                else:
+                    if last_seen == -1: # NOT burned before, and not this timestep
+                        out[i] = -1
+                    else: # burned before, but not this timestep
+                        last_seen += 1
+                        out[i] = last_seen
+            return out
+
+        months_since = xr.apply_ufunc(
+            _months_since_last_burn_1d,
+            monthly_burn_flag,
+            input_core_dims=[["time"]],
+            output_core_dims=[["time"]],
+            vectorize=True, # chatGPT help <-- runs per (x, y)
+            dask="parallelized",
+            output_dtypes=[np.int16],
+        )
+        # print(months_since.shape)
+
+        # replace "never seen" values (-1) to "total months in the record"
+        # (conservative estimate of months since last burn)
+        total_months = months_since.sizes["time"].astype("uint8")
+        sentinel_value = np.int16(total_months)
+
+        months_since = months_since.where(months_since >= 0, other=sentinel_value)
+        
+        # Clip to actual feature grid's selected years
+        clip_start = pd.Timestamp(min(self.gridref.attrs['years']), 1, 1)
+        clip_end   = pd.Timestamp(max(self.gridref.attrs['years']), 12, 31)
+        months_since = months_since.sel(time=slice(clip_start, clip_end))
+
+        # Convert monthly to daily with forward fill
+        months_since = months_since.resample(time="1D").ffill()
+        
+        months_since.name = f_cfg.name
+        return months_since.to_dataset(name=f_cfg.name)
 
     # ----------------------------------------------------------------------
     # Fetching

@@ -221,15 +221,14 @@ def base_feat_config():
         ],
         "MODIS": [
             Feature(
-                name = "modis_burn",
+                name = "months_since_last_burn",
                 key = "MCD64A1",
                 # 0/1 is ordinal
                 resampling = Resampling.nearest,
-                # NO TIME INTERPOLATION
-                # dropped
+                # NO TIME INTERPOLATION, forward fill in proc_modis
             ),
             Feature(
-                name = "modis_lai_canopy",
+                name = "leaf_area_index",
                 key = "MCD15A2H",
                 # simple reprojection
                 resampling = Resampling.nearest, 
@@ -240,7 +239,7 @@ def base_feat_config():
             ),
             Feature(
                 name = "mod13q1", # step function holds values for dropoffs (fires)
-                expand_names = ["modis_ndvi", "modis_water_mask"],
+                expand_names = ["ndvi", "modis_water_mask"],
                 key = "MOD13Q1",
                 # simple reprojection
                 resampling = Resampling.nearest,
@@ -349,7 +348,7 @@ def drv_feat_config() -> List[Feature]:
         ),
         Feature(name = "fire_spatial_roll",
             func = "build_fire_spatial_rolling",
-            inputs=["modis_burn", "usfs_burn", "usfs_perimeter"],
+            inputs=["usfs_burn", "usfs_perimeter"],
             drop_inputs=["usfs_burn", "usfs_perimeter"],
             ds_norms = ["log1p", "z_score"],
         ),
@@ -371,8 +370,8 @@ def drv_feat_config() -> List[Feature]:
         Feature(
             name = "ndvi_anomaly",
             func = "build_ndvi_anomaly",
-            inputs=["modis_ndvi"],
-            drop_inputs=["modis_ndvi"],
+            inputs=["ndvi"],
+            drop_inputs=["ndvi"],
             ds_clip=(-0.1, 1.0),
             ds_norms = ["z_score"],
         ),
