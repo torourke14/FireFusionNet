@@ -1,10 +1,11 @@
 from pathlib import Path
-from shapely.geometry import box
 import xarray as xr, rioxarray
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+from shapely.geometry import box
 from rasterio.features import rasterize
+from scipy.ndimage import gaussian_filter
 
 from .processor import Processor
 from fire_fusion.config.feature_config import CAUSAL_CLASSES, CAUSE_RAW_MAP, Feature
@@ -19,15 +20,6 @@ class UsfsFire(Processor):
         self.gry_min = self.gridref.attrs['y_min']
         self.gry_max = self.gridref.attrs['y_max']
         self.mt_ix = self.gridref.attrs['time_index']
-
-    def get_clipped(self, fp: Path):
-        layer = gpd.read_file(fp).to_crs(self.mCRS)
-        return gpd.clip(layer, 
-            box(
-                self.gridref.attrs['x_min'], self.gridref.attrs['y_min'], 
-                self.gridref.attrs['x_max'], self.gridref.attrs['y_max']
-            )
-        )
     
     def build_feature(self, f_cfg: Feature) -> xr.Dataset:
         if f_cfg.key == "Fire_Occurence":
@@ -45,20 +37,44 @@ class UsfsFire(Processor):
             file = USFS_DIR / "National_USFS_Fire_Perimeter_(Feature_Layer).shp"
             layer = self._build_perim_layer(file, f_cfg)
 
+        elif f_cfg.key == "Fire_KDE":
+            print(f"\n[USFS] computing fire KDE")
+            # Get the (T, cause, Y, X) DataArray from the burn layer
+            file = USFS_DIR / "National_USFS_Fire_Occurrence_Point_(Feature_Layer).shp"
+            ign_TCYX = self._build_burn_layer(file, f_cfg)
+            # Apply a cum sum at each timestep T + gaussian filter to smooth Y/X
+            return self._build_kde_layers(ign_TCYX, f_cfg)
+
         # None of these should be time interpd
-        # layer_ds_full = self._time_interpolate(
-        #     layer.to_dataset(name=f_cfg.name).sortby("time"), 
-        #     f_cfg.time_interp
-        # ).transpose("time", "y", "x", ...)
         layer_ds_full = (
             layer.to_dataset(name=f_cfg.name)
             .sortby("time")
             .transpose("time", "y", "x", ...)
         )
-        del layer
             
         return layer_ds_full
-        
+    
+
+    def get_clipped(self, fp: Path):
+        layer = gpd.read_file(fp).to_crs(self.mCRS)
+        return gpd.clip(layer, 
+            box(
+                self.gridref.attrs['x_min'], self.gridref.attrs['y_min'], 
+                self.gridref.attrs['x_max'], self.gridref.attrs['y_max']
+            )
+        )
+    
+    def normalize_occ_statcause(self, raw):
+        if raw is None:
+            return np.nan
+        val = str(raw).strip().lower()
+        if val == "":
+            return np.nan
+        for kls, keywords in CAUSE_RAW_MAP.items():
+            for kw in keywords:
+                if kw in val:
+                    return kls
+        return np.nan
     
     def _build_occ_layer(self, fp: Path, f_cfg: Feature) -> xr.DataArray:
         fires_usfs = self.get_clipped(fp)
@@ -200,18 +216,6 @@ class UsfsFire(Processor):
     
 
     def _build_burn_layer(self, fp: Path, f_cfg: Feature) -> xr.DataArray:
-        def normalize_statcause(raw):
-            if raw is None:
-                return np.nan
-            val = str(raw).strip().lower()
-            if val == "":
-                return np.nan
-            for kls, keywords in CAUSE_RAW_MAP.items():
-                for kw in keywords:
-                    if kw in val:
-                        return kls
-            return np.nan
-
         fires_usfs = self.get_clipped(fp)
 
         # Discovery Date logic (same as occurence layer)
@@ -238,7 +242,7 @@ class UsfsFire(Processor):
         fires_usfs["t_idx"] = fires_usfs["t_idx"].astype("int32")
 
         # ADDT'L: drop rows where CAUSE is empty/unknown per normalization
-        fires_usfs["burn_cause_class"] = fires_usfs["STATCAUSE"].apply(normalize_statcause)
+        fires_usfs["burn_cause_class"] = fires_usfs["STATCAUSE"].apply(self.normalize_occ_statcause)
         fires_usfs = fires_usfs[fires_usfs["burn_cause_class"].notna()].copy()
         cause_labels = pd.Index(CAUSAL_CLASSES, name="burn_cause")
 
@@ -278,3 +282,51 @@ class UsfsFire(Processor):
         cause_txy = cause_txy.rio.write_crs(self.gridref.rio.crs)
         cause_txy = cause_txy.rio.write_transform(self.gridref.rio.transform())
         return cause_txy
+    
+
+    def _build_kde_layers(self, burn_da: xr.DataArray, f_cfg: Feature) -> xr.Dataset:
+        # === Cumulative sum over time
+        cum_da = burn_da.cumsum(dim="time")
+
+        # Sigma = how wide the bell curve is IN 2d PIXELS = equals average of X/Y pixel
+        # Radius = max radius of filter influence in meters (coordinates)
+        px_size_x = float(abs(self.gridref.rio.transform().a))
+        px_size_y = float(abs(self.gridref.rio.transform().e))
+        pixel_size_m = (px_size_x + px_size_y) / 2.0
+
+        sigma_pixels = (
+            f_cfg.kde_max_radius_m if f_cfg.kde_max_radius_m else 10000 / 
+            pixel_size_m if pixel_size_m > 0 else 0.0
+        )
+        
+        # Loop over burn causes, computing gaussian filter for each
+        kde_by_class = {}
+        for cause in burn_da.coords["burn_cause"].values:
+            # (time, y, x) in numpy
+            cause_slice = cum_da.sel(burn_cause=cause).values
+
+            if cause_slice.sum() == 0:
+                smoothed = cause_slice.astype("float32")
+            else:
+                # Sigma = sigma=(0, sigma, sigma) >> smooth over X/Y, NOT TIME DIM
+                smoothed = gaussian_filter(
+                    cause_slice.astype("float32"),
+                    sigma=(0.0, sigma_pixels, sigma_pixels),
+                    mode="constant"
+                )
+
+            da_kde = xr.DataArray(
+                smoothed,
+                coords={
+                    "time": burn_da.coords["time"],
+                    "y": burn_da.coords["y"], "x": burn_da.coords["x"],
+                },
+                dims=("time", "y", "x"),
+                name=f"kde_{str(cause).lower()}"
+            )
+            kde_by_class[f"kde_{str(cause).lower()}"] = da_kde
+
+        kde_ds = xr.Dataset(kde_by_class)
+        kde_ds = kde_ds.rio.write_crs(self.gridref.rio.crs)
+        kde_ds = kde_ds.rio.write_transform(self.gridref.rio.transform())
+        return kde_ds

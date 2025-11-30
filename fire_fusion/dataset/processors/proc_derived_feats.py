@@ -86,6 +86,15 @@ class DerivedProcessor:
         valid_cause_mask.name = name
         return valid_cause_mask
     
+    def build_water_mask(self, subds: xr.Dataset, name: str) -> xr.DataArray:
+        water_mask = (
+            subds["modis_water_mask"].fillna(0) > 0
+        )
+        water_mask.name = name
+        return water_mask
+
+
+
     # -- Other Features ---------------------------------------------------------------------------
     def build_precip_cum(self, subds: xr.Dataset, names: List[str]) -> xr.Dataset:
         p2d = subds['precip_mm'].rolling(time=2, min_periods=1, center=False).sum().fillna(0)

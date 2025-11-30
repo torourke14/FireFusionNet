@@ -102,7 +102,8 @@ class Modis(Processor):
         if len(nc_files) == 0:
             return None
         
-        year_data: List[xr.DataArray] = []
+        year_data_ndvi: List[xr.DataArray] = []
+        year_data_water: List[xr.DataArray] = []
         for fp in nc_files:
             ts = pd.Timestamp(self._parse_date(fp.name))
             # print(f"[LAADS] Parsing {fp.stem} --> {ts}")
@@ -127,18 +128,32 @@ class Modis(Processor):
                 vi_useful    = ((qa >> 2) & 0b1111) < 13
                 no_adj_cloud = ((qa >> 8) & 0b1) == 0
                 no_mixed_cloud = ((qa >> 10) & 0b1) == 0
-                land_water   = ((qa >> 11) & 0b111).isin([1, 2])
+                valid_viq = quality & vi_useful & no_adj_cloud & no_mixed_cloud
 
-                ndvi = ndvi.where(quality & vi_useful & no_adj_cloud & land_water)
-                ndvi = ndvi * 1.0e-4
+                is_land = ((qa >> 11) & 0b111) == 1
+                is_deep_water   = ((qa >> 11) & 0b111).isin([0, 2, 5, 6, 7])
+
+                ndvi = ndvi.where(valid_viq & is_land) * 1.0e-4
+                water_mask = xr.where(valid_viq & is_deep_water, 1, 0).astype("uint8")
 
             ndvi = ndvi.expand_dims(time=[ts])
-            year_data.append(ndvi)
+            year_data_ndvi.append(ndvi)
+
+            water_mask = water_mask.expand_dims(time=[ts])
+            year_data_water.append(water_mask)
 
         # stack tiles for each day returned
-        stacked = xr.concat(year_data, dim="time").sortby("time")
-        stacked = stacked.groupby("time").max("time")
-        return stacked.to_dataset(name=f_cfg.name)
+        stacked_ndvi = xr.concat(year_data_ndvi, dim="time").sortby("time").groupby("time").max("time")
+        stacked_wmask = xr.concat(year_data_water, dim="time").sortby("time").groupby("time").max("time")
+
+        ys, ye = f"{year}-01-01", f"{year}-12-31"
+        stacked_ndvi = stacked_ndvi.resample(time="1D").ffill().sel(time=slice(ys, ye))
+        stacked_wmask = stacked_wmask.resample(time="1D").ffill().sel(time=slice(ys, ye))
+
+        return xr.Dataset(data_vars={
+            f_cfg.expand_names[0]: stacked_ndvi,
+            f_cfg.expand_names[1]: stacked_wmask
+        })
         
     
     def _fetch_lai(self, f_cfg: Feature, year: int) -> xr.Dataset | None:

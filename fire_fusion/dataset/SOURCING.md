@@ -9,6 +9,9 @@ When using this workflow with LANDFIRE and NLCD data, please cite:
 - [Docs](https://www.landfire.gov/sites/default/files/documents/LF_Data_Dictionary.pdf)
 
 
+#### USDA Wildlife-Urban-Interface (WUI)
+- [Docs/Meta](https://www.fs.usda.gov/rds/archive/catalog/RDS-2015-0012-3)
+
 #### MODIS:
 - [earthaccess API](https://earthaccess.readthedocs.io/en/latest/user-reference/api/api/#earthaccess.api.download)
 - [NASA Data Explorer](https://ladsweb.modaps.eosdis.nasa.gov/search/order/1/MYD11A1--61,MCD15A2H--61)
@@ -34,7 +37,7 @@ When using this workflow with LANDFIRE and NLCD data, please cite:
     - bits 2–5: VI usefulness
     - bit 8: adjacent cloud detected
     - bit 10: mixed cloud
-    - bits 11–13: land/water flag
+    - bits 11–13: land/water flag (1 = land, 0/2/5/6/7=deep water)
     - bits 14–15: possible snow/ice / possible shadow (optional)
   - **250m 16 days NDVI**
     - scale by 1/10,000

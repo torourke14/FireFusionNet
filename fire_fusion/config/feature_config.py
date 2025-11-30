@@ -74,13 +74,17 @@ class Feature:
     # OHEs
     num_classes: Optional[int] = 0
     one_hot_encode: Optional[bool] = False
+
+    # Special attrs
+    kde_max_radius_m: Optional[float] = 10000
+    expand_names: List[str] = [] # names of new features base feature is expanded into
     
     # labels and masks
     inputs: Optional[List[str]] = None
     is_label: Optional[bool] = False
     is_mask: Optional[bool] = False
     # derived features
-    expand_names: Optional[List[str]] = None # names of new features to expand from single feature
+    
     func: Optional[str] = "" # DerivedProcessor function name
     drop_inputs: Optional[List[str] | None] = None
     ds_clip: Optional[Tuple[float, float]] = None   # clip values after processing

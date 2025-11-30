@@ -36,8 +36,6 @@ class Landfire(Processor):
                     arr = self._build_aspect(arr, f_cfg)
                 elif f_cfg.key == "_SlpD":
                     arr = self._build_slope_degrees(arr, f_cfg)
-                elif f_cfg.key == "_EVC":
-                    arr = self._build_water_mask(arr, f_cfg)
                 else:
                     continue
 
@@ -83,15 +81,3 @@ class Landfire(Processor):
         
         feature.name = f_cfg.name
         return feature.astype("float32")
-    
-
-    def _build_water_mask(self, feature: xr.DataArray, f_cfg: Feature) -> xr.DataArray:
-        print("[LF] Is that a... Effective Vegetation Cover... No its RANDY ORTON WITH A WATER MASK")
-        if f_cfg.clip is not None:
-            feature = feature.clip(f_cfg.clip[0], f_cfg.clip[1])
-
-        # code 11 = water
-        # mask = 0 for water, 1 otherwise
-        feature = (feature != 11).astype("int8")
-        feature.name = f_cfg.name
-        return feature

@@ -367,7 +367,7 @@ if __name__ == "__main__":
         mode = "build",
         start_date="2000-01-01", 
         end_date="2020-12-31",
-        resolution = 2500,
-        lat_bounds = (45.4, 49.1),
+        resolution = 3000,
+        lat_bounds = (45.5, 49.0),
         lon_bounds = (-124.8, -117.0),
     )
