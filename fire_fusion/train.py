@@ -17,21 +17,20 @@ from .model.model_utils import (
     save_model, WarmupCosineAnnealingLR
 )
 from .analysis.plots import plot_class_accuracy, plot_loss_curves, plot_rates_per_epoch
+from .config.path_config import MODEL_DIR
 
 
 class WRMTrainer:
-    def __init__(self, mode: Literal['train', 'test'],
+    def __init__(self, 
+        mode: Literal['train', 'test'],
         train_loader: DataLoader,
         eval_loader: DataLoader,
         ign_pos_weight,
         device: torch.device,
+        in_channels: int,
         model_params: Dict,
-        epochs: Tuple[int, int, int],
-        lrs: Tuple[float, float],
-        weight_decay: float,
-        grad_clip: float,
-        debug: bool,
-        acc_goal = 0.7
+        training_params: Dict,
+        debug: bool
     ):
         self.device = device;
         self.use_amp = bool(device.type == "cuda")
@@ -39,22 +38,20 @@ class WRMTrainer:
         self.train_loader = train_loader;
         self.eval_loader = eval_loader
 
-        mp = model_params
-        self.model = FireFusionModel(
-            in_channels=mp['in_channels'], embed_dim=mp['embed_dim'],
-            ws_nheads=mp['ws_nheads'], ws_win_size=mp['ws_win_size'], ws_dropout=mp['ws_dropout'],  
-            cm_nheads=mp['cm_nheads'], cm_d_model=mp['cm_d_model'], cm_mlp_ratio=mp['cm_mlp_ratio'], cm_dropout=mp['cm_dropout'],
-            tm_nheads=mp['tm_nheads'], tm_mlp_ratio=mp['tm_mlp_ratio'], tm_dropout=mp['tm_dropout'],
-            out_size=mp['out_size'],
-        ).to(self.device)
+        self.model = FireFusionModel(in_channels, mp=model_params).to(self.device)
 
-        self.ign_pos_weight = ign_pos_weight.to(device)
+        self.ign_pos_weight = torch.as_tensor(
+            [ign_pos_weight], dtype=torch.float32, device=device
+        )
         self.bcewl_loss = nn.BCEWithLogitsLoss(reduction="none", pos_weight=self.ign_pos_weight)
 
-        self.ep_warmup, self.ep_max, self.ep_early_stop = epochs
-        self.min_lr, self.base_lr = lrs
-        self.weight_decay = weight_decay
-        self.grad_clip = grad_clip
+        ep = training_params["epochs"]
+        self.ep_warmup, self.ep_max, self.ep_early_stop = ep[0], ep[1], ep[2]
+        self.min_lr = training_params["min_lr"]
+        self.base_lr = training_params["base_lr"]
+        self.weight_decay = training_params["weight_decay"]
+        self.grad_clip = training_params["grad_clip"]
+        
         self.debug = debug
 
         self.mm = MetricsManager(num_classes=(2, 3))
@@ -261,64 +258,33 @@ class WRMTrainer:
 
 if __name__ == "__main__":
     set_global_seed(42)
-    device, workers = get_device_config(utilization=0.8)
+    device, workers = get_device_config(utilization=0.9)
 
     """ Model Params """
-    in_channels         = 0
-    embed_dim           = 0
-    # Windowed Spatial Mixing
-    ws_n_heads          = 4
-    ws_window_size      = 8     # num windows to concatenate
-    # Channel Mixing
-    cm_n_heads          = 4
-    cm_n_channels       = 64
-    cm_d_model          = 64
-    cm_mlp_ratio        = 2.0
-    cm_dropout          = 0.01
-    # Temporal Mixing
-    tm_nheads           = 4
-    tm_mlp_ratio        = 2.0
-    tm_dropout          = 0.01
-    # Decoder
-    out_size            = 0
+    with open(f'{MODEL_DIR}/params.json') as file:
+        data = json.load(file)
+        params = data["sanity"]
 
-    """ Training Params """
-    batch_size = 6
-    epochs = (4, 100, 20)       # warmup, total, early stop patience
-    lrs = (1e-5, 3e-4)          # min, base after warmup
-    weight_decay = 3e-5
-    grad_clip = 1.0
+    in_channels         = 27
+    model_params        = params["model"]
+    training_params     = params["training"]
 
     fg = FeatureGrid(
         mode = "load",
         load_datasets=["train", "eval"],
-        start_date="2000-01-01", 
-        end_date="2020-12-31",
+        batch_size=training_params["batch_size"],
+        num_workers=workers,
+        pin_memory=True,
     )
 
     wt = WRMTrainer(
-        device = device, mode = "train",
+        device = device, 
+        mode = "train",
         train_loader = fg.train_loader,
         eval_loader = fg.eval_loader,
         ign_pos_weight = fg.ign_pos_weight,
-        model_params = {
-            # Encoder
-            "in_channels": in_channels, "embed_dim": embed_dim,
-            # Windowed Spatial Mixing
-            "ws_n_heads": ws_n_heads, "ws_win_size": ws_window_size,
-            # Channel Mixing
-            "cm_n_heads": cm_n_heads,
-            "cm_n_channels": cm_n_channels, "cm_d_model": cm_d_model,
-            "cm_mlp_ratio": cm_mlp_ratio, "cm_dropout": cm_dropout,
-            # Temporal Mixing
-            "tm_nheads": tm_nheads,
-            "tm_mlp_ratio": tm_mlp_ratio, "tm_dropout": tm_dropout,
-            # Decoder
-            "out_size": out_size
-        },
-        epochs = epochs,
-        lrs = lrs,
-        weight_decay = weight_decay,
-        grad_clip = 1.0,
-        debug = True
+        in_channels=in_channels,
+        model_params = model_params,
+        training_params=training_params,
+        debug = False
     )

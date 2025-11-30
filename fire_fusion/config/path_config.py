@@ -19,7 +19,8 @@ GRIDMET_DIR     = RAW_DATA_DIR / "gridmet" / "downloaded"
 MODIS_DIR       = RAW_DATA_DIR / "modis" / "fetched"
 USDA_DIR        = RAW_DATA_DIR / "usda" / "downloaded"
 
-MODEL_SAVE_DIR = FF_ROOT / "model" / "saved"
+MODEL_DIR = FF_ROOT / "model"
+MODEL_SAVE_DIR = MODEL_DIR / "saved"
 PLOTS_DIR = FF_ROOT / "analysis" / "plots"
 
 
