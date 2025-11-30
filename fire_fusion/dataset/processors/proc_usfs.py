@@ -15,10 +15,8 @@ from fire_fusion.config.path_config import USFS_DIR
 class UsfsFire(Processor):
     def __init__(self, cfg, master_grid):
         super().__init__(cfg, master_grid)
-        self.grx_min = self.gridref.attrs['x_min']
-        self.grx_max = self.gridref.attrs['x_max']
-        self.gry_min = self.gridref.attrs['y_min']
-        self.gry_max = self.gridref.attrs['y_max']
+        self.grx_min, self.grx_max = self.gridref.attrs['x_min'], self.gridref.attrs['x_max']
+        self.gry_min, self.gry_max = self.gridref.attrs['y_min'], self.gridref.attrs['y_max']
         self.mt_ix = self.gridref.attrs['time_index']
     
     def build_feature(self, f_cfg: Feature) -> xr.Dataset:
@@ -27,23 +25,26 @@ class UsfsFire(Processor):
             file = USFS_DIR / "National_USFS_Fire_Occurrence_Point_(Feature_Layer).shp"
             layer = self._build_occ_layer(file, f_cfg)
 
-        elif f_cfg.key == "Fire_Cause":
-            print(f"\n[USFS] computing fire cause layer")
-            file = USFS_DIR / "National_USFS_Fire_Occurrence_Point_(Feature_Layer).shp"
-            layer = self._build_burn_layer(file, f_cfg)
-
         elif f_cfg.key == "Fire_Perimeter":
             print(f"\n[USFS] computing fire perimeter")
             file = USFS_DIR / "National_USFS_Fire_Perimeter_(Feature_Layer).shp"
             layer = self._build_perim_layer(file, f_cfg)
 
+        elif f_cfg.key == "Fire_Cause":
+            print(f"\n[USFS] computing fire cause layer")
+            self.burn_layer = None
+
+            file = USFS_DIR / "National_USFS_Fire_Occurrence_Point_(Feature_Layer).shp"
+            self.burn_layer = layer = self._build_burn_layer(file, f_cfg)
+
         elif f_cfg.key == "Fire_KDE":
             print(f"\n[USFS] computing fire KDE")
             # Get the (T, cause, Y, X) DataArray from the burn layer
-            file = USFS_DIR / "National_USFS_Fire_Occurrence_Point_(Feature_Layer).shp"
-            ign_TCYX = self._build_burn_layer(file, f_cfg)
+            if self.burn_layer is None:
+                file = USFS_DIR / "National_USFS_Fire_Occurrence_Point_(Feature_Layer).shp"
+                self.burn_layer = self._build_burn_layer(file, [c for c in self.cfg if c.name == 'usfs_burn'][0])
             # Apply a cum sum at each timestep T + gaussian filter to smooth Y/X
-            return self._build_kde_layers(ign_TCYX, f_cfg)
+            return self._build_kde_layers(self.burn_layer, f_cfg)
 
         # None of these should be time interpd
         layer_ds_full = (

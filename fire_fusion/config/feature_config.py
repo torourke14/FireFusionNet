@@ -185,6 +185,40 @@ def base_feat_config():
                 ds_norms = ["z_score"]
             )
         ],
+        "GPW": [
+            Feature(
+                name = "pop_density",
+                resampling = Resampling.nearest,
+                time_interp = ("broadcast", "linear"),
+                ds_clip = (0.0, np.inf),
+                ds_norms=["log1p", "z_score"]
+            )
+        ],
+        "LANDFIRE": [
+            Feature(
+                name = "elevation",
+                key = "_Elev",
+                resampling = Resampling.bilinear,
+                clip = (0.0, 5000.0),
+                time_interp = ("broadcast", "linear"),
+                ds_norms = ["z_score"]
+            ),
+            Feature(
+                name = "slope",
+                key = "_SlpD",
+                clip=(0, 60),
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear"),
+                ds_norms = ["z_score"]
+            ),
+            Feature(
+                name = "aspect",
+                key = "_Asp",
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear"),
+                # dropped
+            ),
+        ],
         "MODIS": [
             Feature(
                 name = "modis_burn",
@@ -214,56 +248,6 @@ def base_feat_config():
                 # time_interp = ("existing", "nearest"),
                 # dropped
             ),
-        ],
-        "LANDFIRE": [
-            Feature(
-                name = "elevation",
-                key = "_Elev",
-                resampling = Resampling.bilinear,
-                clip = (0.0, 5000.0),
-                time_interp = ("broadcast", "linear"),
-                ds_norms = ["z_score"]
-            ),
-            Feature(
-                name = "slope",
-                key = "_SlpD",
-                clip=(0, 60),
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear"),
-                ds_norms = ["z_score"]
-            ),
-            Feature(
-                name = "aspect",
-                key = "_Asp",
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear"),
-                # dropped
-            ),
-        ],
-        "NLCD": [
-            Feature(
-                name = "lcov_class",
-                key = "LndCov",
-                resampling = Resampling.nearest,
-                time_interp = ("broadcast", "nearest"),
-                num_classes = 9,
-                one_hot_encode = True
-                # dropped
-            ),
-            Feature(
-                name = "frac_imp_surface",
-                key = "FctImp",
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear"),
-                ds_clip = (0.0, 1.0),
-            ),
-            Feature(
-                name = "canopy_cover_pct",
-                key = "tccconus",
-                resampling = Resampling.bilinear,
-                time_interp = ("broadcast", "linear"),
-                ds_clip = (0.0, 1.0),
-            )
         ],
         "GRIDMET": [
             Feature(
@@ -314,13 +298,29 @@ def base_feat_config():
                 ds_norms = ["z_score"]
             ),
         ],
-        "GPW": [
+        "NLCD": [
+            # Feature(
+            #     name = "lcov_class",
+            #     key = "LndCov",
+            #     resampling = Resampling.nearest,
+            #     time_interp = ("broadcast", "nearest"),
+            #     num_classes = 9,
+            #     one_hot_encode = True
+            #     # dropped
+            # ),
             Feature(
-                name = "pop_density",
-                resampling = Resampling.nearest,
+                name = "frac_imp_surface",
+                key = "FctImp",
+                resampling = Resampling.bilinear,
                 time_interp = ("broadcast", "linear"),
-                ds_clip = (0.0, np.inf),
-                ds_norms=["log1p", "z_score"]
+                ds_clip = (0.0, 1.0),
+            ),
+            Feature(
+                name = "canopy_cover_pct",
+                key = "tccconus",
+                resampling = Resampling.bilinear,
+                time_interp = ("broadcast", "linear"),
+                ds_clip = (0.0, 1.0),
             )
         ],
         "CENSUSROADS": [
